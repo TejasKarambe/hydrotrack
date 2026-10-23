@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import {
   View,
   StyleSheet,
@@ -6,19 +6,17 @@ import {
   Pressable,
   Keyboard,
   Platform,
+  Alert,
 } from 'react-native';
-import { useRouter } from 'expo-router';
+import { useRouter, useLocalSearchParams } from 'expo-router';
 import { LinearGradient } from 'expo-linear-gradient';
-import Animated, {
-  useSharedValue,
-  useAnimatedStyle,
-  withSpring,
-  withTiming,
-  FadeInDown,
-} from 'react-native-reanimated';
-import { X, Droplets, Check, Clock, Sparkles, CupSoda, GlassWater } from 'lucide-react-native';
+import Animated, { FadeInDown } from 'react-native-reanimated';
+import { X, Droplets, Check, Clock, Trash2, Calendar } from 'lucide-react-native';
 import { Screen, AppText, Button, Card, IconButton } from '../src/components/ui';
 import { useAppTheme } from '../src/theme/ThemeProvider';
+import { useHydration } from '../src/context/HydrationContext';
+import { validateWaterAmount } from '../src/types/database';
+import { formatLocalTime } from '../src/utils/dateUtils';
 
 const PRESET_AMOUNTS = [
   { val: 150, label: 'Small Cup' },
@@ -29,37 +27,98 @@ const PRESET_AMOUNTS = [
   { val: 1000, label: 'Pitcher' },
 ];
 
+const TIME_OFFSETS = [
+  { label: 'Right now', minutesAgo: 0 },
+  { label: '15m ago', minutesAgo: 15 },
+  { label: '30m ago', minutesAgo: 30 },
+  { label: '1h ago', minutesAgo: 60 },
+  { label: '2h ago', minutesAgo: 120 },
+];
+
 export default function LogWaterModal() {
   const router = useRouter();
-  const { colors, isDark, radii } = useAppTheme();
+  const params = useLocalSearchParams<{
+    editId?: string;
+    initialAmount?: string;
+    initialTime?: string;
+  }>();
 
-  const [amount, setAmount] = useState<string>('250');
+  const isEditing = Boolean(params.editId);
+  const editId = params.editId;
+
+  const { colors, isDark, radii } = useAppTheme();
+  const { logCustomAmount, editLog, deleteLog } = useHydration();
+
+  const [amountStr, setAmountStr] = useState<string>(params.initialAmount || '250');
+  const [errorMessage, setErrorMessage] = useState<string | null>(null);
+  const [selectedMinutesAgo, setSelectedMinutesAgo] = useState<number>(0);
+  const [customConsumedDate, setCustomConsumedDate] = useState<Date>(
+    params.initialTime ? new Date(params.initialTime) : new Date()
+  );
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [success, setSuccess] = useState(false);
 
-  const parsedAmount = parseInt(amount, 10);
-  const isValid = !isNaN(parsedAmount) && parsedAmount > 0 && parsedAmount <= 5000;
+  const parsedAmount = parseInt(amountStr, 10);
+  const visualFill = Math.min(1, Math.max(0.08, (parsedAmount || 0) / 1000));
 
-  // Animated fill proportion (clamped to 1000 ml for visualization)
-  const visualFill = Math.min(1, Math.max(0.1, (parsedAmount || 0) / 1000));
+  const handleSelectTimeOffset = (minutesAgo: number) => {
+    setSelectedMinutesAgo(minutesAgo);
+    const d = new Date();
+    d.setMinutes(d.getMinutes() - minutesAgo);
+    setCustomConsumedDate(d);
+  };
 
-  const handleSave = () => {
-    if (!isValid || isSubmitting) return;
-
+  const handleSave = async () => {
     Keyboard.dismiss();
+    const validation = validateWaterAmount(amountStr);
+
+    if (!validation.isValid || !validation.value) {
+      setErrorMessage(validation.error || 'Please enter a valid amount.');
+      return;
+    }
+
+    setErrorMessage(null);
     setIsSubmitting(true);
 
-    setTimeout(() => {
-      setIsSubmitting(false);
+    try {
+      if (isEditing && editId) {
+        await editLog(editId, validation.value, customConsumedDate);
+      } else {
+        await logCustomAmount(validation.value, customConsumedDate);
+      }
+
       setSuccess(true);
       setTimeout(() => {
         router.back();
-      }, 700);
-    }, 350);
+      }, 500);
+    } catch (err) {
+      console.error('Save failed:', err);
+      Alert.alert('Error', 'Failed to save water intake. Please try again.');
+      setIsSubmitting(false);
+    }
   };
 
-  const handleSelectQuick = (val: number) => {
-    setAmount(val.toString());
+  const handleDelete = () => {
+    if (!editId) return;
+    Alert.alert(
+      'Delete Record',
+      'Are you sure you want to delete this water intake entry?',
+      [
+        { text: 'Cancel', style: 'cancel' },
+        {
+          text: 'Delete',
+          style: 'destructive',
+          onPress: async () => {
+            try {
+              await deleteLog(editId);
+              router.back();
+            } catch (err) {
+              Alert.alert('Error', 'Failed to delete record.');
+            }
+          },
+        },
+      ]
+    );
   };
 
   return (
@@ -69,7 +128,7 @@ export default function LogWaterModal() {
       keyboardOffset={Platform.OS === 'ios' ? 40 : 0}
     >
       <View style={styles.container}>
-        {/* Top Header */}
+        {/* Top Navigation */}
         <View style={styles.topBar}>
           <View style={styles.titleRow}>
             <View
@@ -82,10 +141,10 @@ export default function LogWaterModal() {
             </View>
             <View>
               <AppText variant="h2" color="primary">
-                Log Hydration
+                {isEditing ? 'Edit Intake' : 'Log Water'}
               </AppText>
               <AppText variant="subtext" color="secondary">
-                Record intake in millilitres
+                {isEditing ? 'Update logged millilitres' : 'Record volume in millilitres'}
               </AppText>
             </View>
           </View>
@@ -99,13 +158,13 @@ export default function LogWaterModal() {
           />
         </View>
 
-        {/* Realistic Interactive Fluid Vessel Preview */}
+        {/* Live Fluid Flask Container */}
         <Animated.View entering={FadeInDown.duration(400)} style={styles.flaskContainer}>
           <View
             style={[
               styles.flaskOuter,
               {
-                borderColor: colors.borderGlow,
+                borderColor: errorMessage ? colors.danger : colors.borderGlow,
                 backgroundColor: isDark ? 'rgba(15, 23, 42, 0.7)' : 'rgba(240, 249, 255, 0.7)',
               },
             ]}
@@ -119,16 +178,16 @@ export default function LogWaterModal() {
                 },
               ]}
             >
-              <LinearGradient
-                colors={colors.waterGradient}
-                style={StyleSheet.absoluteFill}
-              />
+              <LinearGradient colors={colors.waterGradient} style={StyleSheet.absoluteFill} />
             </View>
 
             <View style={styles.flaskCenterText}>
               <TextInput
-                value={amount}
-                onChangeText={setAmount}
+                value={amountStr}
+                onChangeText={(text) => {
+                  setAmountStr(text);
+                  if (errorMessage) setErrorMessage(null);
+                }}
                 keyboardType="numeric"
                 maxLength={4}
                 placeholder="0"
@@ -145,9 +204,15 @@ export default function LogWaterModal() {
               </AppText>
             </View>
           </View>
+
+          {errorMessage && (
+            <AppText variant="caption" color="danger" style={styles.errorText}>
+              {errorMessage}
+            </AppText>
+          )}
         </Animated.View>
 
-        {/* Quick Presets Grid */}
+        {/* Popular Presets */}
         <View style={styles.presetsSection}>
           <AppText variant="caption" color="secondary" style={styles.presetsLabel}>
             POPULAR VOLUMES
@@ -161,16 +226,15 @@ export default function LogWaterModal() {
                   key={item.val}
                   accessibilityRole="button"
                   accessibilityLabel={`Select ${item.val} ml`}
-                  onPress={() => handleSelectQuick(item.val)}
+                  onPress={() => {
+                    setAmountStr(item.val.toString());
+                    if (errorMessage) setErrorMessage(null);
+                  }}
                   style={({ pressed }) => [
                     styles.presetPill,
                     {
-                      backgroundColor: isSelected
-                        ? colors.accent
-                        : colors.surface,
-                      borderColor: isSelected
-                        ? colors.accent
-                        : colors.border,
+                      backgroundColor: isSelected ? colors.accent : colors.surface,
+                      borderColor: isSelected ? colors.accent : colors.border,
                       opacity: pressed ? 0.75 : 1,
                     },
                   ]}
@@ -194,17 +258,53 @@ export default function LogWaterModal() {
           </View>
         </View>
 
-        {/* Timestamp Info */}
-        <Card variant="subtle" style={styles.timeCard}>
-          <View style={styles.timeRow}>
-            <Clock size={16} color={colors.textSecondary} />
-            <AppText variant="subtext" color="secondary">
-              Timestamp: Today, {new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
+        {/* Optional Timestamp Offset Selection */}
+        <View style={styles.presetsSection}>
+          <View style={styles.timeLabelRow}>
+            <Clock size={14} color={colors.textSecondary} />
+            <AppText variant="caption" color="secondary" style={styles.presetsLabel}>
+              TIME CONSUMED
             </AppText>
           </View>
-        </Card>
 
-        {/* Action Button */}
+          <View style={styles.timeOffsetsRow}>
+            {TIME_OFFSETS.map((t) => {
+              const isSelected = selectedMinutesAgo === t.minutesAgo;
+              return (
+                <Pressable
+                  key={t.label}
+                  accessibilityRole="button"
+                  accessibilityLabel={`Set time to ${t.label}`}
+                  onPress={() => handleSelectTimeOffset(t.minutesAgo)}
+                  style={({ pressed }) => [
+                    styles.timeChip,
+                    {
+                      backgroundColor: isSelected ? colors.accentSubtle : colors.surface,
+                      borderColor: isSelected ? colors.accent : colors.border,
+                      opacity: pressed ? 0.75 : 1,
+                    },
+                  ]}
+                >
+                  <AppText
+                    variant="caption"
+                    color={isSelected ? 'accent' : 'secondary'}
+                    style={isSelected ? styles.selectedTimeChipText : undefined}
+                  >
+                    {t.label}
+                  </AppText>
+                </Pressable>
+              );
+            })}
+          </View>
+
+          <Card variant="subtle" style={styles.activeTimeCard}>
+            <AppText variant="subtext" color="secondary">
+              Logged for: {customConsumedDate.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })} ({customConsumedDate.toLocaleDateString([], { month: 'short', day: 'numeric' })})
+            </AppText>
+          </Card>
+        </View>
+
+        {/* Action Buttons */}
         <View style={styles.footer}>
           {success ? (
             <View
@@ -215,18 +315,29 @@ export default function LogWaterModal() {
             >
               <Check size={20} color={colors.success} strokeWidth={3} />
               <AppText variant="bodyBold" color="success">
-                {parsedAmount} ml logged successfully!
+                {isEditing ? 'Updated successfully!' : `${parsedAmount} ml logged successfully!`}
               </AppText>
             </View>
           ) : (
             <Button
-              label={`Save ${isValid ? `${parsedAmount} ml` : 'Entry'}`}
+              label={isEditing ? 'Update Entry' : `Save ${parsedAmount ? `${parsedAmount} ml` : 'Entry'}`}
               onPress={handleSave}
-              disabled={!isValid || isSubmitting}
+              disabled={isSubmitting}
               loading={isSubmitting}
               variant="primary"
               size="lg"
               fullWidth
+            />
+          )}
+
+          {isEditing && (
+            <Button
+              label="Delete Entry"
+              onPress={handleDelete}
+              variant="danger"
+              size="md"
+              fullWidth
+              leftIcon={<Trash2 size={16} color={colors.danger} />}
             />
           )}
 
@@ -247,7 +358,7 @@ const styles = StyleSheet.create({
   container: {
     paddingHorizontal: 20,
     paddingTop: 16,
-    paddingBottom: 32,
+    paddingBottom: 36,
     gap: 20,
   },
   topBar: {
@@ -312,6 +423,10 @@ const styles = StyleSheet.create({
     fontWeight: '700',
     paddingBottom: 6,
   },
+  errorText: {
+    marginTop: 8,
+    fontWeight: '600',
+  },
   presetsSection: {
     gap: 10,
   },
@@ -338,13 +453,29 @@ const styles = StyleSheet.create({
   pillSubtext: {
     fontSize: 10,
   },
-  timeCard: {
-    paddingVertical: 12,
-  },
-  timeRow: {
+  timeLabelRow: {
     flexDirection: 'row',
     alignItems: 'center',
+    gap: 6,
+  },
+  timeOffsetsRow: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
     gap: 8,
+  },
+  timeChip: {
+    paddingHorizontal: 12,
+    paddingVertical: 7,
+    borderRadius: 14,
+    borderWidth: 1,
+  },
+  selectedTimeChipText: {
+    fontWeight: '700',
+  },
+  activeTimeCard: {
+    paddingVertical: 10,
+    paddingHorizontal: 12,
+    marginTop: 4,
   },
   footer: {
     gap: 10,

@@ -3,8 +3,9 @@ import { useColorScheme as useDeviceColorScheme } from 'react-native';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { useColorScheme as useNativeWindColorScheme } from 'nativewind';
 import { palette, spacing, radii, typography, ThemeColors, ThemeMode, ThemePreference } from './tokens';
+import { getSettings, updateSetting } from '../database/settingsRepository';
 
-const STORAGE_KEY = '@hydrotrack_theme_preference';
+const LEGACY_STORAGE_KEY = '@hydrotrack_theme_preference';
 
 interface ThemeContextType {
   themePreference: ThemePreference;
@@ -27,19 +28,25 @@ export const ThemeProvider: React.FC<{ children: React.ReactNode }> = ({ childre
   const [themePreference, setPreferenceState] = useState<ThemePreference>('system');
   const [isLoaded, setIsLoaded] = useState(false);
 
-  // Load persisted theme preference on mount
+  // Load persisted theme preference on mount from SQLite (with AsyncStorage migration check)
   useEffect(() => {
     let isMounted = true;
     (async () => {
       try {
-        const saved = await AsyncStorage.getItem(STORAGE_KEY);
-        if (saved === 'light' || saved === 'dark' || saved === 'system') {
-          if (isMounted) {
-            setPreferenceState(saved);
-          }
+        const settings = await getSettings();
+        if (isMounted && settings.theme_mode) {
+          setPreferenceState(settings.theme_mode);
         }
       } catch (err) {
-        console.warn('Failed to load theme preference from storage:', err);
+        // Fallback to AsyncStorage during initial migration
+        try {
+          const saved = await AsyncStorage.getItem(LEGACY_STORAGE_KEY);
+          if (saved === 'light' || saved === 'dark' || saved === 'system') {
+            if (isMounted) setPreferenceState(saved);
+          }
+        } catch {
+          // ignore
+        }
       } finally {
         if (isMounted) {
           setIsLoaded(true);
@@ -68,7 +75,10 @@ export const ThemeProvider: React.FC<{ children: React.ReactNode }> = ({ childre
   const setThemePreference = async (pref: ThemePreference) => {
     try {
       setPreferenceState(pref);
-      await AsyncStorage.setItem(STORAGE_KEY, pref);
+      // Persist in SQLite
+      await updateSetting('theme_mode', pref);
+      // Also sync to AsyncStorage for fast splash boot
+      await AsyncStorage.setItem(LEGACY_STORAGE_KEY, pref);
     } catch (err) {
       console.warn('Failed to persist theme preference:', err);
     }

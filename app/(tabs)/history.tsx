@@ -1,100 +1,109 @@
-import React, { useState } from 'react';
-import { View, StyleSheet, Pressable } from 'react-native';
+import React, { useState, useEffect, useCallback } from 'react';
+import { View, StyleSheet, Pressable, Alert } from 'react-native';
+import { useRouter } from 'expo-router';
 import { LinearGradient } from 'expo-linear-gradient';
 import Animated, { FadeInDown, FadeInUp } from 'react-native-reanimated';
-import { Calendar as CalendarIcon, Clock, Droplets, CheckCircle2, ChevronRight } from 'lucide-react-native';
+import { Calendar as CalendarIcon, Clock, Droplets, Trash2, Edit2 } from 'lucide-react-native';
 import { Screen, AppText, Card, Divider, EmptyState } from '../../src/components/ui';
 import { useAppTheme } from '../../src/theme/ThemeProvider';
-
-interface HistoryDay {
-  dateStr: string;
-  dayLabel: string;
-  totalMl: number;
-  goalMl: number;
-  entries: { id: string; amount: number; time: string; label: string }[];
-}
-
-const SAMPLE_DAYS: HistoryDay[] = [
-  {
-    dateStr: '2026-10-22',
-    dayLabel: 'Today',
-    totalMl: 1250,
-    goalMl: 2500,
-    entries: [
-      { id: '1', amount: 250, time: '09:15 AM', label: 'Morning Kickstart' },
-      { id: '2', amount: 500, time: '11:30 AM', label: 'Workout Hydration' },
-      { id: '3', amount: 500, time: '02:00 PM', label: 'Desk Refill' },
-    ],
-  },
-  {
-    dateStr: '2026-10-21',
-    dayLabel: 'Yesterday',
-    totalMl: 2600,
-    goalMl: 2500,
-    entries: [
-      { id: '4', amount: 300, time: '08:30 AM', label: 'Morning Cup' },
-      { id: '5', amount: 500, time: '11:00 AM', label: 'Gym Bottle' },
-      { id: '6', amount: 800, time: '01:45 PM', label: 'Lunch Refill' },
-      { id: '7', amount: 500, time: '04:30 PM', label: 'Afternoon Sip' },
-      { id: '8', amount: 500, time: '08:00 PM', label: 'Evening Glass' },
-    ],
-  },
-  {
-    dateStr: '2026-10-20',
-    dayLabel: 'Tue, Oct 20',
-    totalMl: 2000,
-    goalMl: 2500,
-    entries: [
-      { id: '9', amount: 500, time: '09:00 AM', label: 'Hydration Flask' },
-      { id: '10', amount: 500, time: '01:00 PM', label: 'Lunch Glass' },
-      { id: '11', amount: 1000, time: '06:00 PM', label: 'Evening Carafe' },
-    ],
-  },
-  {
-    dateStr: '2026-10-19',
-    dayLabel: 'Mon, Oct 19',
-    totalMl: 0,
-    goalMl: 2500,
-    entries: [],
-  },
-];
+import { useHydration } from '../../src/context/HydrationContext';
+import { getPastLocalDays, formatLocalTime } from '../../src/utils/dateUtils';
+import { calculateTotalIntake, calculateProgressPercentage } from '../../src/utils/hydrationCalculations';
+import { WaterLog } from '../../src/types/database';
 
 export default function HistoryScreen() {
+  const router = useRouter();
   const { colors, isDark, radii } = useAppTheme();
-  const [selectedDateIndex, setSelectedDateIndex] = useState(0);
+  const { dailyGoalMl, getLogsForDate, deleteLog, todayLogs } = useHydration();
 
-  const currentDay = SAMPLE_DAYS[selectedDateIndex];
-  const goalAchieved = currentDay.totalMl >= currentDay.goalMl;
+  const pastDays = getPastLocalDays(7);
+  const [selectedDayIndex, setSelectedDayIndex] = useState<number>(0);
+  const [selectedDayLogs, setSelectedDayLogs] = useState<WaterLog[]>([]);
+  const [isLoadingDay, setIsLoadingDay] = useState<boolean>(false);
+
+  const selectedDay = pastDays[selectedDayIndex];
+
+  // Fetch records whenever selected day changes or todayLogs updates
+  const loadDayRecords = useCallback(async () => {
+    if (!selectedDay) return;
+    setIsLoadingDay(true);
+    try {
+      const logs = await getLogsForDate(selectedDay.dateKey);
+      setSelectedDayLogs(logs);
+    } catch (err) {
+      console.error('Failed to load day logs:', err);
+    } finally {
+      setIsLoadingDay(false);
+    }
+  }, [selectedDay, getLogsForDate]);
+
+  useEffect(() => {
+    loadDayRecords();
+  }, [loadDayRecords, todayLogs]);
+
+  const dayTotal = calculateTotalIntake(selectedDayLogs);
+  const goalAchieved = dayTotal >= dailyGoalMl && dailyGoalMl > 0;
+  const progressPercent = calculateProgressPercentage(dayTotal, dailyGoalMl);
+
+  const handleDelete = (log: WaterLog) => {
+    Alert.alert(
+      'Delete Entry',
+      `Delete this ${log.amount_ml} ml intake record?`,
+      [
+        { text: 'Cancel', style: 'cancel' },
+        {
+          text: 'Delete',
+          style: 'destructive',
+          onPress: async () => {
+            try {
+              await deleteLog(log.id);
+              await loadDayRecords();
+            } catch {
+              Alert.alert('Error', 'Failed to delete record.');
+            }
+          },
+        },
+      ]
+    );
+  };
+
+  const handleEdit = (log: WaterLog) => {
+    router.push({
+      pathname: '/log-water',
+      params: {
+        editId: log.id,
+        initialAmount: log.amount_ml.toString(),
+        initialTime: log.consumed_at,
+      },
+    });
+  };
 
   return (
     <Screen scrollable safeAreaEdges={['top']}>
       {/* Background Subtle Gradient */}
-      <LinearGradient
-        colors={colors.backgroundGradient}
-        style={StyleSheet.absoluteFill}
-      />
+      <LinearGradient colors={colors.backgroundGradient} style={StyleSheet.absoluteFill} />
 
       <View style={styles.container}>
         {/* Header */}
         <Animated.View entering={FadeInDown.duration(400)} style={styles.header}>
           <AppText variant="h1" color="primary">
-            Intake Logs
+            Intake History
           </AppText>
           <AppText variant="subtext" color="secondary">
-            Daily timeline and past hydration records
+            Daily timeline and past SQLite hydration logs
           </AppText>
         </Animated.View>
 
         {/* Date Selector Chips */}
         <Animated.View entering={FadeInUp.delay(100).duration(450)} style={styles.dateSelectorRow}>
-          {SAMPLE_DAYS.map((day, idx) => {
-            const isSelected = idx === selectedDateIndex;
+          {pastDays.map((day, idx) => {
+            const isSelected = idx === selectedDayIndex;
             return (
               <Pressable
-                key={day.dateStr}
+                key={day.dateKey}
                 accessibilityRole="button"
-                accessibilityLabel={`Select ${day.dayLabel}`}
-                onPress={() => setSelectedDateIndex(idx)}
+                accessibilityLabel={`Select ${day.label}`}
+                onPress={() => setSelectedDayIndex(idx)}
                 style={({ pressed }) => [
                   styles.dateChip,
                   {
@@ -109,7 +118,7 @@ export default function HistoryScreen() {
                   color={isSelected ? 'accentText' : 'secondary'}
                   style={isSelected ? styles.selectedChipText : undefined}
                 >
-                  {day.dayLabel}
+                  {day.label}
                 </AppText>
               </Pressable>
             );
@@ -132,14 +141,14 @@ export default function HistoryScreen() {
             <View style={styles.summaryTop}>
               <View>
                 <AppText variant="caption" color="secondary">
-                  Total for {currentDay.dayLabel}
+                  Total for {selectedDay.label}
                 </AppText>
                 <View style={styles.metricRow}>
                   <AppText variant="numericLarge" color="primary">
-                    {currentDay.totalMl.toLocaleString()}
+                    {dayTotal.toLocaleString()}
                   </AppText>
                   <AppText variant="h3" color="secondary" style={styles.unitText}>
-                    / {currentDay.goalMl.toLocaleString()} ml
+                    / {dailyGoalMl.toLocaleString()} ml
                   </AppText>
                 </View>
               </View>
@@ -162,7 +171,7 @@ export default function HistoryScreen() {
                   color={goalAchieved ? 'success' : 'accent'}
                   style={styles.statusBadgeText}
                 >
-                  {goalAchieved ? 'Goal Achieved' : `${Math.round((currentDay.totalMl / currentDay.goalMl) * 100)}%`}
+                  {goalAchieved ? 'Goal Achieved' : `${progressPercent}%`}
                 </AppText>
               </View>
             </View>
@@ -171,13 +180,24 @@ export default function HistoryScreen() {
 
         {/* Timeline Entries or Empty State */}
         <Animated.View entering={FadeInUp.delay(200).duration(450)} style={styles.timelineSection}>
-          <AppText variant="h3" color="primary">
-            Entries ({currentDay.entries.length})
-          </AppText>
+          <View style={styles.timelineHeaderRow}>
+            <AppText variant="h3" color="primary">
+              Entries ({selectedDayLogs.length})
+            </AppText>
+            <Pressable
+              accessibilityRole="button"
+              accessibilityLabel="Add entry for this day"
+              onPress={() => router.push('/log-water')}
+            >
+              <AppText variant="caption" color="accent">
+                + Add Record
+              </AppText>
+            </Pressable>
+          </View>
 
-          {currentDay.entries.length > 0 ? (
+          {selectedDayLogs.length > 0 ? (
             <Card variant="default" padding={0} style={styles.timelineCard}>
-              {currentDay.entries.map((entry, index) => (
+              {selectedDayLogs.map((entry, index) => (
                 <React.Fragment key={entry.id}>
                   <View style={styles.timelineRow}>
                     <View style={styles.timelineLeft}>
@@ -191,22 +211,37 @@ export default function HistoryScreen() {
                       </View>
                       <View>
                         <AppText variant="bodyBold" color="primary">
-                          {entry.amount} ml
+                          {entry.amount_ml} ml
                         </AppText>
-                        <AppText variant="caption" color="secondary">
-                          {entry.label}
-                        </AppText>
+                        <View style={styles.timeTagRow}>
+                          <Clock size={11} color={colors.textMuted} />
+                          <AppText variant="caption" color="muted">
+                            {formatLocalTime(entry.consumed_at)}
+                          </AppText>
+                        </View>
                       </View>
                     </View>
 
-                    <View style={styles.timelineRight}>
-                      <Clock size={12} color={colors.textMuted} />
-                      <AppText variant="caption" color="muted">
-                        {entry.time}
-                      </AppText>
+                    <View style={styles.timelineActions}>
+                      <Pressable
+                        accessibilityRole="button"
+                        accessibilityLabel="Edit record"
+                        onPress={() => handleEdit(entry)}
+                        style={({ pressed }) => [styles.actionBtn, { opacity: pressed ? 0.6 : 1 }]}
+                      >
+                        <Edit2 size={16} color={colors.textSecondary} />
+                      </Pressable>
+                      <Pressable
+                        accessibilityRole="button"
+                        accessibilityLabel="Delete record"
+                        onPress={() => handleDelete(entry)}
+                        style={({ pressed }) => [styles.actionBtn, { opacity: pressed ? 0.6 : 1 }]}
+                      >
+                        <Trash2 size={16} color={colors.danger} />
+                      </Pressable>
                     </View>
                   </View>
-                  {index < currentDay.entries.length - 1 && (
+                  {index < selectedDayLogs.length - 1 && (
                     <Divider subtle spacing={0} />
                   )}
                 </React.Fragment>
@@ -216,8 +251,10 @@ export default function HistoryScreen() {
             <Card variant="subtle">
               <EmptyState
                 icon={<CalendarIcon size={24} color={colors.textSecondary} />}
-                title="No logs for this date"
-                message="No water intake was recorded on this day."
+                title={`No Logs for ${selectedDay.label}`}
+                message="No water intake was recorded on this day in SQLite."
+                actionLabel="Log Water"
+                onAction={() => router.push('/log-water')}
               />
             </Card>
           )}
@@ -286,6 +323,11 @@ const styles = StyleSheet.create({
   timelineSection: {
     gap: 12,
   },
+  timelineHeaderRow: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+  },
   timelineCard: {
     overflow: 'hidden',
   },
@@ -301,6 +343,12 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     gap: 12,
   },
+  timeTagRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 4,
+    marginTop: 2,
+  },
   timelineIconBadge: {
     width: 36,
     height: 36,
@@ -308,9 +356,12 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'center',
   },
-  timelineRight: {
+  timelineActions: {
     flexDirection: 'row',
     alignItems: 'center',
-    gap: 4,
+    gap: 12,
+  },
+  actionBtn: {
+    padding: 6,
   },
 });

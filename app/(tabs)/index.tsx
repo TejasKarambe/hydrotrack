@@ -1,15 +1,10 @@
 import React, { useState } from 'react';
-import { View, StyleSheet, Pressable } from 'react-native';
+import { View, StyleSheet, Pressable, Alert, ActivityIndicator } from 'react-native';
 import { useRouter } from 'expo-router';
 import { LinearGradient } from 'expo-linear-gradient';
 import Animated, {
   FadeInDown,
   FadeInUp,
-  useSharedValue,
-  useAnimatedStyle,
-  withSequence,
-  withTiming,
-  withSpring,
 } from 'react-native-reanimated';
 import {
   Droplet,
@@ -21,58 +16,85 @@ import {
   ChevronRight,
   Sparkles,
   Zap,
+  Trash2,
+  Edit2,
+  GlassWater,
 } from 'lucide-react-native';
-import { Screen, AppText, Card, Divider } from '../../src/components/ui';
+import { Screen, AppText, Card, Divider, EmptyState } from '../../src/components/ui';
 import { useAppTheme } from '../../src/theme/ThemeProvider';
+import { useHydration } from '../../src/context/HydrationContext';
 import { AnimatedWaterVessel } from '../../src/components/common/AnimatedWaterVessel';
 import { QuickAddCard } from '../../src/components/common/QuickAddCard';
-
-const DAILY_GOAL = 2500;
-const INITIAL_CONSUMED = 1250;
-
-interface IntakeEntry {
-  id: string;
-  amount: number;
-  time: string;
-  label: string;
-}
-
-const INITIAL_TIMELINE: IntakeEntry[] = [
-  { id: '1', amount: 250, time: '09:15 AM', label: 'Morning Kickstart' },
-  { id: '2', amount: 500, time: '11:30 AM', label: 'Workout Hydration' },
-  { id: '3', amount: 500, time: '02:00 PM', label: 'Desk Refill' },
-];
+import { formatLocalTime } from '../../src/utils/dateUtils';
+import { WaterLog } from '../../src/types/database';
 
 export default function HomeScreen() {
   const router = useRouter();
   const { colors, isDark, radii } = useAppTheme();
+  const {
+    todayLogs,
+    todayTotalMl,
+    dailyGoalMl,
+    remainingMl,
+    progressPercent,
+    streak,
+    isLoading,
+    isInitialized,
+    quickAdd,
+    deleteLog,
+  } = useHydration();
 
-  const [consumedAmount, setConsumedAmount] = useState(INITIAL_CONSUMED);
-  const [timeline, setTimeline] = useState<IntakeEntry[]>(INITIAL_TIMELINE);
   const [toastMessage, setToastMessage] = useState<string | null>(null);
+  const [isQuickAdding, setIsQuickAdding] = useState(false);
 
-  const remaining = Math.max(0, DAILY_GOAL - consumedAmount);
-  const percentage = Math.min(100, Math.round((consumedAmount / DAILY_GOAL) * 100));
+  const handleQuickAdd = async (amount: number, label: string) => {
+    if (isQuickAdding) return;
+    try {
+      setIsQuickAdding(true);
+      await quickAdd(amount);
+      setToastMessage(`+${amount} ml added! (${label})`);
+      setTimeout(() => {
+        setToastMessage(null);
+      }, 2500);
+    } catch (err) {
+      Alert.alert('Error', 'Failed to save water intake. Please try again.');
+    } finally {
+      setIsQuickAdding(false);
+    }
+  };
 
-  const handleQuickAdd = (amount: number, label: string) => {
-    setConsumedAmount((prev) => prev + amount);
-    const now = new Date();
-    const timeStr = now.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
-    setTimeline((prev) => [
-      {
-        id: Date.now().toString(),
-        amount,
-        time: timeStr,
-        label,
+  const handleDeleteLog = (log: WaterLog) => {
+    Alert.alert(
+      'Delete Entry',
+      `Are you sure you want to delete this ${log.amount_ml} ml intake log?`,
+      [
+        { text: 'Cancel', style: 'cancel' },
+        {
+          text: 'Delete',
+          style: 'destructive',
+          onPress: async () => {
+            try {
+              await deleteLog(log.id);
+              setToastMessage('Entry deleted');
+              setTimeout(() => setToastMessage(null), 2000);
+            } catch (err) {
+              Alert.alert('Error', 'Failed to delete record.');
+            }
+          },
+        },
+      ]
+    );
+  };
+
+  const handleEditLog = (log: WaterLog) => {
+    router.push({
+      pathname: '/log-water',
+      params: {
+        editId: log.id,
+        initialAmount: log.amount_ml.toString(),
+        initialTime: log.consumed_at,
       },
-      ...prev,
-    ]);
-
-    // Show temporary lively toast feedback
-    setToastMessage(`+${amount} ml added!`);
-    setTimeout(() => {
-      setToastMessage(null);
-    }, 2200);
+    });
   };
 
   const getGreeting = (): string => {
@@ -83,18 +105,35 @@ export default function HomeScreen() {
   };
 
   const getHydrationTip = (): string => {
-    if (percentage >= 100) return "Goal achieved! Excellent hydration today! 🎉";
-    if (percentage >= 60) return "You're in great flow. Just a couple more glasses to complete!";
-    return "Drink one glass now to keep your focus and energy sharp.";
+    if (progressPercent >= 100) return 'Daily goal reached! Outstanding hydration today! 🎉';
+    if (progressPercent >= 60) return "You're in great flow. Just a couple more glasses to complete!";
+    if (todayTotalMl === 0) return 'Kickstart your day: Drink your first glass to wake up your body.';
+    return 'Consistent sips keep your focus sharp and energy balanced.';
   };
+
+  const todayFormatted = new Date().toLocaleDateString(undefined, {
+    weekday: 'long',
+    month: 'short',
+    day: 'numeric',
+  });
+
+  if (isLoading && !isInitialized) {
+    return (
+      <Screen safeAreaEdges={['top']}>
+        <View style={styles.loadingContainer}>
+          <ActivityIndicator size="large" color={colors.accent} />
+          <AppText variant="subtext" color="secondary" style={styles.loadingText}>
+            Loading hydration records...
+          </AppText>
+        </View>
+      </Screen>
+    );
+  }
 
   return (
     <Screen scrollable safeAreaEdges={['top']}>
       {/* Background Subtle Radiant Aura */}
-      <LinearGradient
-        colors={colors.backgroundGradient}
-        style={StyleSheet.absoluteFill}
-      />
+      <LinearGradient colors={colors.backgroundGradient} style={StyleSheet.absoluteFill} />
 
       <View style={styles.container}>
         {/* Top Header with Greeting & Streak Badge */}
@@ -106,11 +145,11 @@ export default function HomeScreen() {
               </AppText>
             </View>
             <AppText variant="subtext" color="secondary">
-              Thursday, Oct 22 • Stay refreshed
+              {todayFormatted} • Stay refreshed
             </AppText>
           </View>
 
-          {/* Interactive Streak Pill */}
+          {/* Dynamic Streak Pill */}
           <View
             style={[
               styles.streakBadge,
@@ -122,12 +161,12 @@ export default function HomeScreen() {
           >
             <Flame size={16} color="#F59E0B" fill="#F59E0B" />
             <AppText variant="caption" style={styles.streakText}>
-              5 Day Streak
+              {streak > 0 ? `${streak} Day Streak` : 'Streak: Day 1'}
             </AppText>
           </View>
         </Animated.View>
 
-        {/* Temporary Lively Feedback Toast */}
+        {/* Temporary Feedback Toast */}
         {toastMessage && (
           <Animated.View
             entering={FadeInDown.duration(250)}
@@ -146,9 +185,9 @@ export default function HomeScreen() {
           </Animated.View>
         )}
 
-        {/* Realistic Living Water Vessel Centerpiece */}
+        {/* Living Water Vessel Centerpiece (Driven by real SQLite data) */}
         <Animated.View entering={FadeInUp.duration(500)}>
-          <AnimatedWaterVessel currentMl={consumedAmount} goalMl={DAILY_GOAL} size={230} />
+          <AnimatedWaterVessel currentMl={todayTotalMl} goalMl={dailyGoalMl} size={230} />
         </Animated.View>
 
         {/* Hydration Insight Card */}
@@ -179,10 +218,12 @@ export default function HomeScreen() {
               <View style={styles.insightTextCol}>
                 <View style={styles.insightTopRow}>
                   <AppText variant="bodyBold" color="primary">
-                    {percentage >= 100 ? 'Target Reached!' : `${remaining.toLocaleString()} ml remaining`}
+                    {progressPercent >= 100
+                      ? 'Target Achieved!'
+                      : `${remainingMl.toLocaleString()} ml remaining`}
                   </AppText>
                   <AppText variant="caption" color="accent" style={styles.insightPercent}>
-                    {percentage}%
+                    {progressPercent}%
                   </AppText>
                 </View>
                 <AppText variant="subtext" color="secondary">
@@ -204,7 +245,7 @@ export default function HomeScreen() {
             </View>
             <Pressable
               accessibilityRole="button"
-              accessibilityLabel="Open custom water log modal"
+              accessibilityLabel="Open custom water log screen"
               onPress={() => router.push('/log-water')}
               style={({ pressed }) => [
                 styles.customAddLink,
@@ -221,7 +262,7 @@ export default function HomeScreen() {
             <QuickAddCard
               amount={150}
               label="Small Cup"
-              sublabel="Espresso / Tea"
+              sublabel="Tea / Espresso"
               iconType="cup"
               onPress={() => handleQuickAdd(150, 'Small Cup')}
             />
@@ -230,19 +271,19 @@ export default function HomeScreen() {
               label="Glass"
               sublabel="Fresh Water"
               iconType="glass"
-              onPress={() => handleQuickAdd(250, 'Glass of Water')}
+              onPress={() => handleQuickAdd(250, 'Glass')}
             />
             <QuickAddCard
               amount={500}
               label="Flask / Bottle"
               sublabel="Hydration Refill"
               iconType="bottle"
-              onPress={() => handleQuickAdd(500, 'Sports Bottle')}
+              onPress={() => handleQuickAdd(500, 'Bottle')}
             />
           </View>
         </Animated.View>
 
-        {/* Reminder Pill Card */}
+        {/* Reminder Summary Card */}
         <Animated.View entering={FadeInUp.delay(200).duration(450)}>
           <Card variant="subtle" style={styles.reminderCard}>
             <View style={styles.reminderContent}>
@@ -257,7 +298,7 @@ export default function HomeScreen() {
               <View style={styles.reminderTextCol}>
                 <View style={styles.reminderTitleRow}>
                   <AppText variant="bodyBold" color="primary">
-                    Next Reminder
+                    Smart Reminder
                   </AppText>
                   <View
                     style={[
@@ -271,59 +312,96 @@ export default function HomeScreen() {
                   </View>
                 </View>
                 <AppText variant="subtext" color="secondary">
-                  Scheduled for 06:00 PM (Hourly interval)
+                  Active 09:00 AM – 09:00 PM (Hourly interval)
                 </AppText>
               </View>
             </View>
           </Card>
         </Animated.View>
 
-        {/* Recent Intake Timeline */}
+        {/* Live Today's Intake Timeline */}
         <Animated.View entering={FadeInUp.delay(250).duration(450)} style={styles.section}>
           <View style={styles.sectionHeader}>
             <AppText variant="h3" color="primary">
-              Today's Logs
+              Today's Logs ({todayLogs.length})
             </AppText>
-            <Pressable onPress={() => router.push('/(tabs)/history')}>
-              <AppText variant="caption" color="accent">
-                View all ({timeline.length})
-              </AppText>
-            </Pressable>
+            {todayLogs.length > 0 && (
+              <Pressable onPress={() => router.push('/(tabs)/history')}>
+                <AppText variant="caption" color="accent">
+                  Full History
+                </AppText>
+              </Pressable>
+            )}
           </View>
 
-          <Card variant="default" padding={0} style={styles.timelineCard}>
-            {timeline.map((entry, index) => (
-              <React.Fragment key={entry.id}>
-                <View style={styles.timelineRow}>
-                  <View style={styles.timelineLeft}>
-                    <View
-                      style={[
-                        styles.timelineIconBadge,
-                        { backgroundColor: colors.accentSubtle },
-                      ]}
-                    >
-                      <Droplet size={16} color={colors.accent} strokeWidth={2.5} />
+          {todayLogs.length > 0 ? (
+            <Card variant="default" padding={0} style={styles.timelineCard}>
+              {todayLogs.map((entry, index) => (
+                <React.Fragment key={entry.id}>
+                  <View style={styles.timelineRow}>
+                    <View style={styles.timelineLeft}>
+                      <View
+                        style={[
+                          styles.timelineIconBadge,
+                          { backgroundColor: colors.accentSubtle },
+                        ]}
+                      >
+                        <Droplet size={16} color={colors.accent} strokeWidth={2.5} />
+                      </View>
+                      <View>
+                        <AppText variant="bodyBold" color="primary">
+                          {entry.amount_ml} ml
+                        </AppText>
+                        <View style={styles.timeTagRow}>
+                          <Clock size={11} color={colors.textMuted} />
+                          <AppText variant="caption" color="muted">
+                            {formatLocalTime(entry.consumed_at)}
+                          </AppText>
+                        </View>
+                      </View>
                     </View>
-                    <View>
-                      <AppText variant="bodyBold" color="primary">
-                        {entry.amount} ml
-                      </AppText>
-                      <AppText variant="caption" color="secondary">
-                        {entry.label}
-                      </AppText>
+
+                    {/* Action buttons (Edit & Delete) */}
+                    <View style={styles.timelineActions}>
+                      <Pressable
+                        accessibilityRole="button"
+                        accessibilityLabel="Edit water intake entry"
+                        onPress={() => handleEditLog(entry)}
+                        style={({ pressed }) => [
+                          styles.actionIconBtn,
+                          { opacity: pressed ? 0.6 : 1 },
+                        ]}
+                      >
+                        <Edit2 size={16} color={colors.textSecondary} />
+                      </Pressable>
+                      <Pressable
+                        accessibilityRole="button"
+                        accessibilityLabel="Delete water intake entry"
+                        onPress={() => handleDeleteLog(entry)}
+                        style={({ pressed }) => [
+                          styles.actionIconBtn,
+                          { opacity: pressed ? 0.6 : 1 },
+                        ]}
+                      >
+                        <Trash2 size={16} color={colors.danger} />
+                      </Pressable>
                     </View>
                   </View>
-                  <View style={styles.timelineRight}>
-                    <Clock size={12} color={colors.textMuted} />
-                    <AppText variant="caption" color="muted">
-                      {entry.time}
-                    </AppText>
-                  </View>
-                </View>
-                {index < timeline.length - 1 && <Divider subtle spacing={0} />}
-              </React.Fragment>
-            ))}
-          </Card>
+                  {index < todayLogs.length - 1 && <Divider subtle spacing={0} />}
+                </React.Fragment>
+              ))}
+            </Card>
+          ) : (
+            <Card variant="subtle" style={styles.emptyCard}>
+              <EmptyState
+                icon={<GlassWater size={28} color={colors.accent} />}
+                title="No Water Logged Today"
+                message="Tap a quick-add vessel above or log a custom amount to start tracking."
+                actionLabel="Log Water"
+                onAction={() => router.push('/log-water')}
+              />
+            </Card>
+          )}
         </Animated.View>
       </View>
     </Screen>
@@ -331,6 +409,15 @@ export default function HomeScreen() {
 }
 
 const styles = StyleSheet.create({
+  loadingContainer: {
+    flex: 1,
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 12,
+  },
+  loadingText: {
+    marginTop: 8,
+  },
   container: {
     paddingHorizontal: 20,
     paddingBottom: 40,
@@ -473,6 +560,12 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     gap: 12,
   },
+  timeTagRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 4,
+    marginTop: 2,
+  },
   timelineIconBadge: {
     width: 36,
     height: 36,
@@ -480,9 +573,15 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'center',
   },
-  timelineRight: {
+  timelineActions: {
     flexDirection: 'row',
     alignItems: 'center',
-    gap: 4,
+    gap: 12,
+  },
+  actionIconBtn: {
+    padding: 6,
+  },
+  emptyCard: {
+    paddingVertical: 8,
   },
 });

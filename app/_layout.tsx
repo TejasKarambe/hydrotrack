@@ -12,6 +12,7 @@ import {
   PlusJakartaSans_800ExtraBold,
 } from '@expo-google-fonts/plus-jakarta-sans';
 import { ThemeProvider, useAppTheme } from '../src/theme/ThemeProvider';
+import { HydrationProvider } from '../src/context/HydrationContext';
 
 function RootNavigation() {
   const { colors } = useAppTheme();
@@ -49,13 +50,15 @@ export default function RootLayout() {
   return (
     <SafeAreaProvider>
       <ThemeProvider>
-        {fontsLoaded ? (
-          <RootNavigation />
-        ) : (
-          <View style={{ flex: 1, justifyContent: 'center', alignItems: 'center' }}>
-            <ActivityIndicator size="large" color="#0284C7" />
-          </View>
-        )}
+        <HydrationProvider>
+          {fontsLoaded ? (
+            <RootNavigation />
+          ) : (
+            <View style={{ flex: 1, justifyContent: 'center', alignItems: 'center' }}>
+              <ActivityIndicator size="large" color="#0284C7" />
+            </View>
+          )}
+        </HydrationProvider>
       </ThemeProvider>
     </SafeAreaProvider>
   );

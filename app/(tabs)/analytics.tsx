@@ -1,44 +1,61 @@
-import React from 'react';
+import React, { useState, useEffect, useCallback } from 'react';
 import { View, StyleSheet } from 'react-native';
 import { LinearGradient } from 'expo-linear-gradient';
 import Animated, { FadeInDown, FadeInUp } from 'react-native-reanimated';
-import { Trophy, TrendingUp, Droplets, Sparkles, Award, Calendar } from 'lucide-react-native';
+import { Trophy, TrendingUp, Droplets, Award } from 'lucide-react-native';
 import { Screen, AppText, Card } from '../../src/components/ui';
 import { useAppTheme } from '../../src/theme/ThemeProvider';
+import { useHydration } from '../../src/context/HydrationContext';
+import {
+  calculateAverageIntake,
+  calculateDaysAchieved,
+} from '../../src/utils/hydrationCalculations';
 
-interface WeeklyDayData {
-  day: string;
-  date: string;
-  amount: number;
-  goal: number;
+interface DaySummaryItem {
+  dateKey: string;
+  dayLabel: string;
+  totalMl: number;
   isToday: boolean;
 }
 
-const SAMPLE_WEEKLY_DATA: WeeklyDayData[] = [
-  { day: 'Fri', date: 'Oct 16', amount: 2500, goal: 2500, isToday: false },
-  { day: 'Sat', date: 'Oct 17', amount: 2800, goal: 2500, isToday: false },
-  { day: 'Sun', date: 'Oct 18', amount: 1800, goal: 2500, isToday: false },
-  { day: 'Mon', date: 'Oct 19', amount: 0, goal: 2500, isToday: false },
-  { day: 'Tue', date: 'Oct 20', amount: 2000, goal: 2500, isToday: false },
-  { day: 'Wed', date: 'Oct 21', amount: 2600, goal: 2500, isToday: false },
-  { day: 'Thu', date: 'Oct 22', amount: 1250, goal: 2500, isToday: true },
-];
-
 export default function AnalyticsScreen() {
   const { colors, isDark, radii } = useAppTheme();
+  const { dailyGoalMl, getWeeklySummary, todayTotalMl } = useHydration();
 
-  const maxAmount = Math.max(...SAMPLE_WEEKLY_DATA.map((d) => d.amount), 3000);
-  const totalPeriod = SAMPLE_WEEKLY_DATA.reduce((acc, curr) => acc + curr.amount, 0);
-  const averageDaily = Math.round(totalPeriod / SAMPLE_WEEKLY_DATA.length);
-  const achievedDays = SAMPLE_WEEKLY_DATA.filter((d) => d.amount >= d.goal).length;
+  const [weeklyData, setWeeklyData] = useState<DaySummaryItem[]>([]);
+  const [isLoading, setIsLoading] = useState(true);
+
+  const loadWeeklyData = useCallback(async () => {
+    setIsLoading(true);
+    try {
+      const data = await getWeeklySummary();
+      setWeeklyData(data);
+    } catch (err) {
+      console.error('Failed to load weekly summary:', err);
+    } finally {
+      setIsLoading(false);
+    }
+  }, [getWeeklySummary]);
+
+  useEffect(() => {
+    loadWeeklyData();
+  }, [loadWeeklyData, todayTotalMl]);
+
+  const amounts = weeklyData.map((d) => d.totalMl);
+  const maxAmount = Math.max(...amounts, dailyGoalMl, 2500);
+  const totalPeriod = amounts.reduce((acc, curr) => acc + curr, 0);
+  const averageDaily = calculateAverageIntake(amounts);
+
+  const daysComparison = weeklyData.map((d) => ({
+    totalMl: d.totalMl,
+    goalMl: dailyGoalMl,
+  }));
+  const achievedDays = calculateDaysAchieved(daysComparison);
 
   return (
     <Screen scrollable safeAreaEdges={['top']}>
       {/* Background Subtle Gradient */}
-      <LinearGradient
-        colors={colors.backgroundGradient}
-        style={StyleSheet.absoluteFill}
-      />
+      <LinearGradient colors={colors.backgroundGradient} style={StyleSheet.absoluteFill} />
 
       <View style={styles.container}>
         {/* Header */}
@@ -103,7 +120,7 @@ export default function AnalyticsScreen() {
               Target Achieved
             </AppText>
             <AppText variant="numericMedium" color="primary">
-              {achievedDays} of 7 days
+              {achievedDays} of {weeklyData.length} days
             </AppText>
           </LinearGradient>
         </Animated.View>
@@ -117,7 +134,7 @@ export default function AnalyticsScreen() {
                   Weekly Rhythm
                 </AppText>
                 <AppText variant="caption" color="secondary">
-                  Target: 2,500 ml/day
+                  Target: {dailyGoalMl.toLocaleString()} ml/day
                 </AppText>
               </View>
               <View
@@ -136,15 +153,17 @@ export default function AnalyticsScreen() {
             {/* Visual Bars Container */}
             <View style={styles.chartContainer}>
               <View style={styles.barsRow}>
-                {SAMPLE_WEEKLY_DATA.map((item) => {
-                  const heightPercent = Math.max(8, Math.round((item.amount / maxAmount) * 100));
-                  const achieved = item.amount >= item.goal;
-                  const isZero = item.amount === 0;
+                {weeklyData.map((item) => {
+                  const heightPercent = item.totalMl === 0
+                    ? 6
+                    : Math.max(8, Math.min(100, Math.round((item.totalMl / maxAmount) * 100)));
+                  const achieved = item.totalMl >= dailyGoalMl && dailyGoalMl > 0;
+                  const isZero = item.totalMl === 0;
 
                   return (
-                    <View key={item.day} style={styles.barCol}>
+                    <View key={item.dateKey} style={styles.barCol}>
                       <AppText variant="caption" color="muted" style={styles.barValueText}>
-                        {isZero ? '0' : `${Math.round(item.amount / 100) / 10}k`}
+                        {isZero ? '0' : `${Math.round(item.totalMl / 100) / 10}k`}
                       </AppText>
 
                       <View
@@ -186,7 +205,7 @@ export default function AnalyticsScreen() {
                         color={item.isToday ? 'accent' : 'secondary'}
                         style={item.isToday ? styles.todayLabel : undefined}
                       >
-                        {item.day}
+                        {item.dayLabel}
                       </AppText>
                     </View>
                   );
@@ -196,17 +215,21 @@ export default function AnalyticsScreen() {
           </Card>
         </Animated.View>
 
-        {/* Motivational Streak & Consistency Card */}
+        {/* Motivational Consistency Card */}
         <Animated.View entering={FadeInUp.delay(200).duration(450)}>
           <Card variant="subtle" style={styles.insightCard}>
             <View style={styles.insightHeaderRow}>
               <Trophy size={18} color="#D97706" />
               <AppText variant="bodyBold" color="primary">
-                Optimal Hydration Score: 85%
+                Hydration Consistency
               </AppText>
             </View>
             <AppText variant="subtext" color="secondary">
-              Your water consumption is highest during early afternoons. Keep regular sips to sustain focus and avoid energy crashes.
+              {achievedDays >= 4
+                ? `Excellent consistency! You hit your goal ${achievedDays} times in the last 7 days.`
+                : achievedDays > 0
+                ? `You reached your target ${achievedDays} times in the last 7 days. Consistency maintains focus.`
+                : 'Build your momentum: Drinking small amounts every hour helps reach your target easily.'}
             </AppText>
           </Card>
         </Animated.View>
