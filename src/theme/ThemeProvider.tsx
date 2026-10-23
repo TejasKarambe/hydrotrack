@@ -37,7 +37,7 @@ export const ThemeProvider: React.FC<{ children: React.ReactNode }> = ({ childre
         if (isMounted && settings.theme_mode) {
           setPreferenceState(settings.theme_mode);
         }
-      } catch (err) {
+      } catch {
         // Fallback to AsyncStorage during initial migration
         try {
           const saved = await AsyncStorage.getItem(LEGACY_STORAGE_KEY);

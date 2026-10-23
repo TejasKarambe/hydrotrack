@@ -8,7 +8,7 @@ import Animated, {
 import { LinearGradient } from 'expo-linear-gradient';
 import { useAppTheme } from '../../theme/ThemeProvider';
 import { AppText } from '../ui/AppText';
-import { Droplets, GlassWater, CupSoda, Milk, Sparkles } from 'lucide-react-native';
+import { Droplets, GlassWater, CupSoda } from 'lucide-react-native';
 
 interface QuickAddCardProps {
   amount: number;

@@ -72,11 +72,11 @@ export function isLocalToday(isoString: string): boolean {
 }
 
 /**
- * Formats an ISO string to a human-friendly local time, e.g. "09:15 AM".
+ * Formats a Date or ISO string to a human-friendly local time, e.g. "09:15 AM".
  */
-export function formatLocalTime(isoString: string): string {
+export function formatLocalTime(input: Date | string): string {
   try {
-    const d = new Date(isoString);
+    const d = typeof input === 'string' ? new Date(input) : input;
     if (isNaN(d.getTime())) return '';
     return d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
   } catch {
@@ -120,4 +120,156 @@ export function getPastLocalDays(daysCount: number = 7): { dateKey: string; labe
 
 function dOrClone(d: Date): Date {
   return new Date(d.getTime());
+}
+
+/**
+ * Formats a Date or dateKey to a complete, elegant string, e.g. "Friday, Oct 23, 2026".
+ */
+export function formatDateFull(input: Date | string): string {
+  try {
+    const d = typeof input === 'string'
+      ? input.length === 10
+        ? (() => {
+            const [y, m, day] = input.split('-').map(Number);
+            return new Date(y, m - 1, day);
+          })()
+        : new Date(input)
+      : input;
+
+    if (isNaN(d.getTime())) return '';
+    return d.toLocaleDateString([], {
+      weekday: 'long',
+      month: 'short',
+      day: 'numeric',
+      year: 'numeric',
+    });
+  } catch {
+    return '';
+  }
+}
+
+/**
+ * Formats Month and Year, e.g. "October 2026".
+ */
+export function formatMonthYear(year: number, month: number): string {
+  const d = new Date(year, month, 1);
+  return d.toLocaleDateString([], { month: 'long', year: 'numeric' });
+}
+
+/**
+ * Shifts a given Date or dateKey by a given number of days (+/-).
+ */
+export function shiftDateByDays(input: Date | string, days: number): Date {
+  const base = typeof input === 'string'
+    ? input.length === 10
+      ? (() => {
+          const [y, m, day] = input.split('-').map(Number);
+          return new Date(y, m - 1, day);
+        })()
+      : new Date(input)
+    : new Date(input.getTime());
+
+  const result = new Date(base.getFullYear(), base.getMonth(), base.getDate() + days);
+  return result;
+}
+
+/**
+ * Generates an array of Date objects between start and end dates (inclusive).
+ */
+export function getDateRange(startDate: Date | string, endDate: Date | string): Date[] {
+  const start = typeof startDate === 'string' && startDate.length === 10
+    ? (() => {
+        const [y, m, d] = startDate.split('-').map(Number);
+        return new Date(y, m - 1, d);
+      })()
+    : new Date(startDate);
+
+  const end = typeof endDate === 'string' && endDate.length === 10
+    ? (() => {
+        const [y, m, d] = endDate.split('-').map(Number);
+        return new Date(y, m - 1, d);
+      })()
+    : new Date(endDate);
+
+  const dates: Date[] = [];
+  const curr = new Date(start.getFullYear(), start.getMonth(), start.getDate());
+  const final = new Date(end.getFullYear(), end.getMonth(), end.getDate());
+
+  while (curr.getTime() <= final.getTime()) {
+    dates.push(new Date(curr.getTime()));
+    curr.setDate(curr.getDate() + 1);
+  }
+
+  return dates;
+}
+
+export interface CalendarDayCell {
+  date: Date;
+  dateKey: string;
+  dayNumber: number;
+  isCurrentMonth: boolean;
+  isToday: boolean;
+  isFuture: boolean;
+}
+
+/**
+ * Generates cells for a monthly calendar grid (Monday - Sunday aligned).
+ */
+export function getCalendarGrid(year: number, month: number): CalendarDayCell[] {
+  const todayKey = getLocalDateKey(new Date());
+  const firstDayOfMonth = new Date(year, month, 1);
+  const lastDayOfMonth = new Date(year, month + 1, 0);
+
+  // In JS, Sunday is 0. Shift so Monday is 0 (0: Mon, 1: Tue, ..., 6: Sun)
+  const firstDayWeekday = (firstDayOfMonth.getDay() + 6) % 7;
+  const daysInCurrentMonth = lastDayOfMonth.getDate();
+
+  const cells: CalendarDayCell[] = [];
+
+  // Trailing days from previous month
+  const prevMonthLastDay = new Date(year, month, 0).getDate();
+  for (let i = firstDayWeekday - 1; i >= 0; i--) {
+    const prevDay = prevMonthLastDay - i;
+    const d = new Date(year, month - 1, prevDay);
+    const dateKey = getLocalDateKey(d);
+    cells.push({
+      date: d,
+      dateKey,
+      dayNumber: prevDay,
+      isCurrentMonth: false,
+      isToday: dateKey === todayKey,
+      isFuture: d.getTime() > Date.now(),
+    });
+  }
+
+  // Days in current month
+  for (let d = 1; d <= daysInCurrentMonth; d++) {
+    const dayDate = new Date(year, month, d);
+    const dateKey = getLocalDateKey(dayDate);
+    cells.push({
+      date: dayDate,
+      dateKey,
+      dayNumber: d,
+      isCurrentMonth: true,
+      isToday: dateKey === todayKey,
+      isFuture: dayDate.getTime() > Date.now() && dateKey !== todayKey,
+    });
+  }
+
+  // Leading days from next month to complete the grid (up to multiple of 7)
+  const remainingCells = (7 - (cells.length % 7)) % 7;
+  for (let nextDay = 1; nextDay <= remainingCells; nextDay++) {
+    const d = new Date(year, month + 1, nextDay);
+    const dateKey = getLocalDateKey(d);
+    cells.push({
+      date: d,
+      dateKey,
+      dayNumber: nextDay,
+      isCurrentMonth: false,
+      isToday: dateKey === todayKey,
+      isFuture: true,
+    });
+  }
+
+  return cells;
 }

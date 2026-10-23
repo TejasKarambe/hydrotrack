@@ -8,11 +8,9 @@ import Animated, {
 } from 'react-native-reanimated';
 import {
   Droplet,
-  Plus,
   Clock,
   Bell,
   Flame,
-  CheckCircle2,
   ChevronRight,
   Sparkles,
   Zap,
@@ -26,6 +24,7 @@ import { useHydration } from '../../src/context/HydrationContext';
 import { AnimatedWaterVessel } from '../../src/components/common/AnimatedWaterVessel';
 import { QuickAddCard } from '../../src/components/common/QuickAddCard';
 import { formatLocalTime } from '../../src/utils/dateUtils';
+import { formatVolume } from '../../src/utils/hydrationCalculations';
 import { WaterLog } from '../../src/types/database';
 
 export default function HomeScreen() {
@@ -42,6 +41,9 @@ export default function HomeScreen() {
     isInitialized,
     quickAdd,
     deleteLog,
+    settings,
+    nextReminderTime,
+    notificationStatus,
   } = useHydration();
 
   const [toastMessage, setToastMessage] = useState<string | null>(null);
@@ -52,11 +54,11 @@ export default function HomeScreen() {
     try {
       setIsQuickAdding(true);
       await quickAdd(amount);
-      setToastMessage(`+${amount} ml added! (${label})`);
+      setToastMessage(`+${formatVolume(amount, settings.preferred_display_unit)} added! (${label})`);
       setTimeout(() => {
         setToastMessage(null);
       }, 2500);
-    } catch (err) {
+    } catch {
       Alert.alert('Error', 'Failed to save water intake. Please try again.');
     } finally {
       setIsQuickAdding(false);
@@ -66,7 +68,7 @@ export default function HomeScreen() {
   const handleDeleteLog = (log: WaterLog) => {
     Alert.alert(
       'Delete Entry',
-      `Are you sure you want to delete this ${log.amount_ml} ml intake log?`,
+      `Are you sure you want to delete this ${formatVolume(log.amount_ml, settings.preferred_display_unit)} intake log?`,
       [
         { text: 'Cancel', style: 'cancel' },
         {
@@ -77,7 +79,7 @@ export default function HomeScreen() {
               await deleteLog(log.id);
               setToastMessage('Entry deleted');
               setTimeout(() => setToastMessage(null), 2000);
-            } catch (err) {
+            } catch {
               Alert.alert('Error', 'Failed to delete record.');
             }
           },
@@ -187,7 +189,12 @@ export default function HomeScreen() {
 
         {/* Living Water Vessel Centerpiece (Driven by real SQLite data) */}
         <Animated.View entering={FadeInUp.duration(500)}>
-          <AnimatedWaterVessel currentMl={todayTotalMl} goalMl={dailyGoalMl} size={230} />
+          <AnimatedWaterVessel
+            currentMl={todayTotalMl}
+            goalMl={dailyGoalMl}
+            size={230}
+            unit={settings.preferred_display_unit}
+          />
         </Animated.View>
 
         {/* Hydration Insight Card */}
@@ -220,7 +227,7 @@ export default function HomeScreen() {
                   <AppText variant="bodyBold" color="primary">
                     {progressPercent >= 100
                       ? 'Target Achieved!'
-                      : `${remainingMl.toLocaleString()} ml remaining`}
+                      : `${formatVolume(remainingMl, settings.preferred_display_unit)} remaining`}
                   </AppText>
                   <AppText variant="caption" color="accent" style={styles.insightPercent}>
                     {progressPercent}%
@@ -285,45 +292,98 @@ export default function HomeScreen() {
 
         {/* Reminder Summary Card */}
         <Animated.View entering={FadeInUp.delay(200).duration(450)}>
-          <Card variant="subtle" style={styles.reminderCard}>
-            <View style={styles.reminderContent}>
-              <View
-                style={[
-                  styles.reminderIconWrapper,
-                  { backgroundColor: colors.accentSubtle },
-                ]}
-              >
-                <Bell size={18} color={colors.accent} />
-              </View>
-              <View style={styles.reminderTextCol}>
-                <View style={styles.reminderTitleRow}>
-                  <AppText variant="bodyBold" color="primary">
-                    Smart Reminder
-                  </AppText>
-                  <View
-                    style={[
-                      styles.activeBadge,
-                      { backgroundColor: colors.successBg },
-                    ]}
-                  >
-                    <AppText variant="caption" color="success">
-                      Active
-                    </AppText>
-                  </View>
+          <Pressable
+            accessibilityRole="button"
+            accessibilityLabel="View and configure reminder schedule"
+            onPress={() => router.push('/(tabs)/settings')}
+            style={({ pressed }) => [{ opacity: pressed ? 0.8 : 1 }]}
+          >
+            <Card variant="subtle" style={styles.reminderCard}>
+              <View style={styles.reminderContent}>
+                <View
+                  style={[
+                    styles.reminderIconWrapper,
+                    {
+                      backgroundColor: !settings.reminders_enabled
+                        ? colors.surfaceSubtle
+                        : notificationStatus && !notificationStatus.granted
+                        ? '#FEF3C7'
+                        : colors.accentSubtle,
+                    },
+                  ]}
+                >
+                  <Bell
+                    size={18}
+                    color={
+                      !settings.reminders_enabled
+                        ? colors.textMuted
+                        : notificationStatus && !notificationStatus.granted
+                        ? '#D97706'
+                        : colors.accent
+                    }
+                  />
                 </View>
-                <AppText variant="subtext" color="secondary">
-                  Active 09:00 AM – 09:00 PM (Hourly interval)
-                </AppText>
+                <View style={styles.reminderTextCol}>
+                  <View style={styles.reminderTitleRow}>
+                    <AppText variant="bodyBold" color="primary">
+                      Smart Reminders
+                    </AppText>
+                    {!settings.reminders_enabled ? (
+                      <View
+                        style={[
+                          styles.activeBadge,
+                          { backgroundColor: colors.surfaceSubtle },
+                        ]}
+                      >
+                        <AppText variant="caption" color="muted">
+                          Paused
+                        </AppText>
+                      </View>
+                    ) : notificationStatus && !notificationStatus.granted ? (
+                      <View
+                        style={[
+                          styles.activeBadge,
+                          { backgroundColor: '#FEF3C7' },
+                        ]}
+                      >
+                        <AppText variant="caption" style={{ color: '#D97706' }}>
+                          Permission Needed
+                        </AppText>
+                      </View>
+                    ) : (
+                      <View
+                        style={[
+                          styles.activeBadge,
+                          { backgroundColor: colors.successBg },
+                        ]}
+                      >
+                        <AppText variant="caption" color="success">
+                          Active
+                        </AppText>
+                      </View>
+                    )}
+                  </View>
+                  <AppText variant="subtext" color="secondary">
+                    {!settings.reminders_enabled
+                      ? 'Reminders paused. Tap to enable and set active schedule.'
+                      : notificationStatus && !notificationStatus.granted
+                      ? 'System notifications disabled. Tap to enable in Settings.'
+                      : nextReminderTime
+                      ? `Next: ${formatLocalTime(nextReminderTime)} (${settings.reminder_interval_minutes}m interval)`
+                      : `${settings.reminder_start_time} – ${settings.reminder_end_time} (${settings.reminder_interval_minutes}m interval)`}
+                  </AppText>
+                </View>
+                <ChevronRight size={16} color={colors.textMuted} />
               </View>
-            </View>
-          </Card>
+            </Card>
+          </Pressable>
         </Animated.View>
 
         {/* Live Today's Intake Timeline */}
         <Animated.View entering={FadeInUp.delay(250).duration(450)} style={styles.section}>
           <View style={styles.sectionHeader}>
             <AppText variant="h3" color="primary">
-              Today's Logs ({todayLogs.length})
+              {"Today's Logs"} ({todayLogs.length})
             </AppText>
             {todayLogs.length > 0 && (
               <Pressable onPress={() => router.push('/(tabs)/history')}>
@@ -350,7 +410,7 @@ export default function HomeScreen() {
                       </View>
                       <View>
                         <AppText variant="bodyBold" color="primary">
-                          {entry.amount_ml} ml
+                          {formatVolume(entry.amount_ml, settings.preferred_display_unit)}
                         </AppText>
                         <View style={styles.timeTagRow}>
                           <Clock size={11} color={colors.textMuted} />

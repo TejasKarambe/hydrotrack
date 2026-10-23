@@ -32,74 +32,81 @@ export interface ThemeColors {
   cardShadow: string;
   tabBarBg: string;
   tabBarBorder: string;
+  // Neumorphic shadow helpers
+  neuShadowLight: string;
+  neuShadowDark: string;
 }
 
 export const palette: Record<ThemeMode, ThemeColors> = {
-  // Vibrant, refreshing, high-end Light Palette
+  // ─── Soft Neumorphic Light ─────────────────────────────────────────────────
   light: {
-    background: '#F6F9FD',
-    backgroundGradient: ['#EDF5FF', '#F6F9FD', '#F0F9FF'],
-    surface: '#FFFFFF',
-    surfaceSubtle: '#F1F5F9',
-    surfaceElevated: '#FFFFFF',
-    surfaceGlass: 'rgba(255, 255, 255, 0.85)',
-    textPrimary: '#0F172A', // Deep obsidian navy
-    textSecondary: '#475569', // Clean slate
-    textMuted: '#94A3B8',
-    border: '#E2E8F0',
-    borderSubtle: '#F1F5F9',
-    borderGlow: 'rgba(14, 165, 233, 0.25)',
-    accent: '#0284C7', // Vivid aquatic blue
-    accentHover: '#0369A1',
-    accentMuted: '#BAE6FD',
-    accentSubtle: '#E0F2FE',
-    accentText: '#FFFFFF',
-    accentGlow: 'rgba(2, 132, 199, 0.22)',
-    waterGradient: ['#38BDF8', '#0EA5E9', '#0284C7'], // Electric sky to deep azure
-    waterWaveTop: 'rgba(56, 189, 248, 0.65)',
-    waterWaveBottom: '#0284C7',
-    success: '#059669',
-    successBg: '#D1FAE5',
-    warning: '#D97706',
-    warningBg: '#FEF3C7',
-    danger: '#E11D48',
-    dangerBg: '#FFE4E6',
-    cardShadow: 'rgba(15, 23, 42, 0.06)',
-    tabBarBg: 'rgba(255, 255, 255, 0.95)',
-    tabBarBorder: '#E2E8F0',
+    background: '#E7F1F9',
+    backgroundGradient: ['#EAF3FB', '#E7F1F9', '#DDE9F4'],
+    surface: '#EEF5FC',
+    surfaceSubtle: '#E0ECF6',
+    surfaceElevated: '#F5FAFF',
+    surfaceGlass: 'rgba(231, 241, 249, 0.90)',
+    textPrimary: '#26344F',       // Deep navy
+    textSecondary: '#7B8387',     // Cool grey
+    textMuted: '#A9B4BA',
+    border: '#D5E4F0',
+    borderSubtle: '#E0ECF6',
+    borderGlow: 'rgba(254, 128, 93, 0.30)',
+    accent: '#FE805D',            // Warm coral-orange
+    accentHover: '#F5664A',
+    accentMuted: '#FFD0C4',
+    accentSubtle: '#FFECE7',
+    accentText: '#FE805D',
+    accentGlow: 'rgba(254, 128, 93, 0.28)',
+    waterGradient: ['#FFA07A', '#FE805D', '#F5664A'],
+    waterWaveTop: 'rgba(254, 128, 93, 0.60)',
+    waterWaveBottom: '#F5664A',
+    success: '#27AE60',
+    successBg: '#D5F0E0',
+    warning: '#F39C12',
+    warningBg: '#FEF5DC',
+    danger: '#E74C3C',
+    dangerBg: '#FDDBD8',
+    cardShadow: 'rgba(38, 52, 79, 0.10)',
+    tabBarBg: 'rgba(231, 241, 249, 0.97)',
+    tabBarBorder: '#C8DBE9',
+    neuShadowLight: '#FFFFFF',
+    neuShadowDark: 'rgba(166, 193, 216, 0.75)',
   },
-  // Luxurious, futuristic OLED Dark Palette
+  // ─── Deep Neumorphic Dark ──────────────────────────────────────────────────
   dark: {
-    background: '#090D16', // Ultra deep space navy
-    backgroundGradient: ['#0B1120', '#090D16', '#060A12'],
-    surface: '#111827', // Rich midnight slate
-    surfaceSubtle: '#172033',
-    surfaceElevated: '#1A243B',
-    surfaceGlass: 'rgba(17, 24, 39, 0.85)',
-    textPrimary: '#F8FAFC',
-    textSecondary: '#94A3B8',
-    textMuted: '#64748B',
-    border: '#1E293B',
-    borderSubtle: '#141D2D',
-    borderGlow: 'rgba(56, 189, 248, 0.3)',
-    accent: '#38BDF8', // Luminous electric cyan
-    accentHover: '#7DD3FC',
-    accentMuted: '#075985',
-    accentSubtle: 'rgba(56, 189, 248, 0.12)',
-    accentText: '#090D16',
-    accentGlow: 'rgba(56, 189, 248, 0.35)',
-    waterGradient: ['#22D3EE', '#0EA5E9', '#0369A1'], // Neon cyan to royal blue
-    waterWaveTop: 'rgba(34, 211, 238, 0.7)',
-    waterWaveBottom: '#0284C7',
-    success: '#34D399',
-    successBg: 'rgba(5, 150, 105, 0.2)',
-    warning: '#FBBF24',
-    warningBg: 'rgba(217, 119, 6, 0.2)',
-    danger: '#FB7185',
-    dangerBg: 'rgba(225, 29, 72, 0.2)',
-    cardShadow: 'rgba(0, 0, 0, 0.45)',
-    tabBarBg: 'rgba(13, 19, 33, 0.95)',
-    tabBarBorder: '#1E293B',
+    background: '#1A1F2E',        // Deep navy-slate
+    backgroundGradient: ['#1D2335', '#1A1F2E', '#161B29'],
+    surface: '#212840',
+    surfaceSubtle: '#1C2236',
+    surfaceElevated: '#263050',
+    surfaceGlass: 'rgba(26, 31, 46, 0.90)',
+    textPrimary: '#E8EEF6',
+    textSecondary: '#8A97B0',
+    textMuted: '#5A677E',
+    border: '#2A3350',
+    borderSubtle: '#1F2840',
+    borderGlow: 'rgba(254, 128, 93, 0.35)',
+    accent: '#FE805D',            // Same coral — pops against dark
+    accentHover: '#FF9578',
+    accentMuted: '#5C2D1E',
+    accentSubtle: 'rgba(254, 128, 93, 0.14)',
+    accentText: '#FFFFFF',
+    accentGlow: 'rgba(254, 128, 93, 0.40)',
+    waterGradient: ['#FF9578', '#FE805D', '#F5664A'],
+    waterWaveTop: 'rgba(255, 149, 120, 0.65)',
+    waterWaveBottom: '#F5664A',
+    success: '#2ECC71',
+    successBg: 'rgba(39, 174, 96, 0.18)',
+    warning: '#F1C40F',
+    warningBg: 'rgba(243, 156, 18, 0.18)',
+    danger: '#E74C3C',
+    dangerBg: 'rgba(231, 76, 60, 0.18)',
+    cardShadow: 'rgba(0, 0, 0, 0.50)',
+    tabBarBg: 'rgba(20, 25, 38, 0.97)',
+    tabBarBorder: '#243050',
+    neuShadowLight: 'rgba(255, 255, 255, 0.05)',
+    neuShadowDark: 'rgba(0, 0, 0, 0.45)',
   },
 };
 
@@ -179,6 +186,12 @@ export const typography = {
     fontSize: 12,
     lineHeight: 16,
     fontWeight: '600' as const,
+    letterSpacing: 0.2,
+  },
+  captionBold: {
+    fontSize: 12,
+    lineHeight: 16,
+    fontWeight: '700' as const,
     letterSpacing: 0.2,
   },
   numericHero: {

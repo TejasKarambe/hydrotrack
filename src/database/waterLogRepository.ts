@@ -1,6 +1,6 @@
 import { getDatabase } from './database';
 import { WaterLog, validateWaterAmount } from '../types/database';
-import { getLocalDayBounds, getBoundsFromDateKey, getLocalDateKey } from '../utils/dateUtils';
+import { getLocalDayBounds, getBoundsFromDateKey, getLocalDateKey, getDateRange } from '../utils/dateUtils';
 
 function generateId(): string {
   if (typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function') {
@@ -181,33 +181,123 @@ export async function getDailyTotal(date: Date | string = new Date()): Promise<n
   }
 }
 
+export interface DailyAggregate {
+  dateKey: string;
+  dayLabel: string;
+  date: Date;
+  totalMl: number;
+  isToday: boolean;
+  logCount: number;
+}
+
 /**
- * Fetches totals for past N days up to today.
+ * Fetches daily aggregates for any custom date range in a single indexed SQLite query.
+ * Fills zero-intake days automatically.
+ */
+export async function getDailyAggregatesForRange(
+  startDate: Date | string,
+  endDate: Date | string
+): Promise<DailyAggregate[]> {
+  const dates = getDateRange(startDate, endDate);
+  if (dates.length === 0) return [];
+
+  const firstBounds = getLocalDayBounds(dates[0]);
+  const lastBounds = getLocalDayBounds(dates[dates.length - 1]);
+  const todayKey = getLocalDateKey(new Date());
+
+  try {
+    const db = await getDatabase();
+    const rows = await db.getAllAsync<{ id: string; amount_ml: number; consumed_at: string }>(
+      `SELECT id, amount_ml, consumed_at
+       FROM water_logs
+       WHERE consumed_at >= ? AND consumed_at <= ?
+       ORDER BY consumed_at ASC;`,
+      [firstBounds.startIso, lastBounds.endIso]
+    );
+
+    // Group rows by local date key
+    const logsByDate = new Map<string, number>();
+    const countByDate = new Map<string, number>();
+
+    for (const row of rows) {
+      const key = getLocalDateKey(row.consumed_at);
+      const currentSum = logsByDate.get(key) || 0;
+      logsByDate.set(key, currentSum + row.amount_ml);
+      countByDate.set(key, (countByDate.get(key) || 0) + 1);
+    }
+
+    const aggregates: DailyAggregate[] = dates.map((d) => {
+      const bounds = getLocalDayBounds(d);
+      const isToday = bounds.dateKey === todayKey;
+      const dayLabel = isToday
+        ? 'Today'
+        : d.toLocaleDateString([], { weekday: 'short' });
+
+      return {
+        dateKey: bounds.dateKey,
+        dayLabel,
+        date: d,
+        totalMl: logsByDate.get(bounds.dateKey) || 0,
+        isToday,
+        logCount: countByDate.get(bounds.dateKey) || 0,
+      };
+    });
+
+    return aggregates;
+  } catch (err) {
+    console.error('[waterLogRepository] Failed to get range aggregates:', err);
+    throw new WaterLogError('Failed to calculate water aggregates for date range', err);
+  }
+}
+
+/**
+ * Fetches totals for past N days up to today in a single query.
  */
 export async function getPastDaysTotals(
   daysCount: number = 7
 ): Promise<{ dateKey: string; dayLabel: string; totalMl: number; isToday: boolean }[]> {
-  const results: { dateKey: string; dayLabel: string; totalMl: number; isToday: boolean }[] = [];
+  const endDate = new Date();
+  const startDate = new Date();
+  startDate.setDate(startDate.getDate() - (daysCount - 1));
 
-  for (let i = daysCount - 1; i >= 0; i--) {
-    const d = new Date();
-    d.setDate(d.getDate() - i);
-    const bounds = getLocalDayBounds(d);
-    const isToday = i === 0;
-    const dayLabel = isToday
-      ? 'Today'
-      : d.toLocaleDateString([], { weekday: 'short' });
+  const aggregates = await getDailyAggregatesForRange(startDate, endDate);
+  return aggregates.map((a) => ({
+    dateKey: a.dateKey,
+    dayLabel: a.dayLabel,
+    totalMl: a.totalMl,
+    isToday: a.isToday,
+  }));
+}
 
-    const totalMl = await getDailyTotal(d);
-    results.push({
-      dateKey: bounds.dateKey,
-      dayLabel,
-      totalMl,
-      isToday,
-    });
+/**
+ * Returns distinct local date keys (YYYY-MM-DD) that have recorded water intake in a given month.
+ */
+export async function getDatesWithLogsForMonth(
+  year: number,
+  month: number
+): Promise<string[]> {
+  const startLocal = new Date(year, month, 1, 0, 0, 0, 0);
+  const endLocal = new Date(year, month + 1, 0, 23, 59, 59, 999);
+
+  try {
+    const db = await getDatabase();
+    const rows = await db.getAllAsync<{ consumed_at: string }>(
+      `SELECT consumed_at
+       FROM water_logs
+       WHERE consumed_at >= ? AND consumed_at <= ?;`,
+      [startLocal.toISOString(), endLocal.toISOString()]
+    );
+
+    const dateSet = new Set<string>();
+    for (const r of rows) {
+      dateSet.add(getLocalDateKey(r.consumed_at));
+    }
+
+    return Array.from(dateSet);
+  } catch (err) {
+    console.error('[waterLogRepository] Failed to get dates with logs for month:', err);
+    return [];
   }
-
-  return results;
 }
 
 /**

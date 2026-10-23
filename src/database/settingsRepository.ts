@@ -95,22 +95,31 @@ export async function updateSetting<K extends keyof UserSettings>(
   }
 }
 
-/**
- * Updates multiple settings in a single transaction.
- */
 export async function updateSettings(updates: Partial<UserSettings>): Promise<UserSettings> {
   try {
     const db = await getDatabase();
-    await db.withTransactionAsync(async () => {
-      for (const [k, v] of Object.entries(updates)) {
-        if (v !== undefined) {
-          await updateSetting(k as keyof UserSettings, v as any);
+    const now = new Date().toISOString();
+    for (const [k, v] of Object.entries(updates)) {
+      if (v !== undefined) {
+        let stringVal: string;
+        if (typeof v === 'boolean') {
+          stringVal = v ? '1' : '0';
+        } else if (Array.isArray(v)) {
+          stringVal = JSON.stringify(v);
+        } else {
+          stringVal = String(v);
         }
+        await db.runAsync(
+          `INSERT INTO settings (key, value, updated_at)
+           VALUES (?, ?, ?)
+           ON CONFLICT(key) DO UPDATE SET value = excluded.value, updated_at = excluded.updated_at;`,
+          [k, stringVal, now]
+        );
       }
-    });
+    }
     return await getSettings();
   } catch (err) {
-    console.error('[settingsRepository] Failed to update settings in transaction:', err);
+    console.error('[settingsRepository] Failed to update settings:', err);
     throw new SettingsError('Failed to update settings.', err);
   }
 }
@@ -131,5 +140,36 @@ export async function resetSettings(): Promise<UserSettings> {
   } catch (err) {
     console.error('[settingsRepository] Failed to reset settings:', err);
     throw new SettingsError('Failed to reset settings.', err);
+  }
+}
+
+/**
+ * Resets all water intake records AND settings to default values inside a single atomic SQLite transaction.
+ */
+export async function resetAllDataTransactionally(): Promise<UserSettings> {
+  try {
+    const db = await getDatabase();
+    await db.withTransactionAsync(async () => {
+      await db.runAsync(`DELETE FROM water_logs;`);
+      await db.runAsync(`DELETE FROM settings;`);
+      const now = new Date().toISOString();
+      for (const [key, val] of Object.entries(DEFAULT_SETTINGS)) {
+        const stringVal =
+          typeof val === 'boolean'
+            ? (val ? '1' : '0')
+            : Array.isArray(val)
+            ? JSON.stringify(val)
+            : String(val);
+        await db.runAsync(`INSERT INTO settings (key, value, updated_at) VALUES (?, ?, ?);`, [
+          key,
+          stringVal,
+          now,
+        ]);
+      }
+    });
+    return DEFAULT_SETTINGS;
+  } catch (err) {
+    console.error('[settingsRepository] Failed transactional reset:', err);
+    throw new SettingsError('Failed to reset all data transactionally.', err);
   }
 }

@@ -5,7 +5,7 @@ import { Droplet, Calendar, BarChart3, Settings } from 'lucide-react-native';
 import { useAppTheme } from '../../src/theme/ThemeProvider';
 
 export default function TabLayout() {
-  const { colors, typography, isDark } = useAppTheme();
+  const { colors, isDark } = useAppTheme();
 
   return (
     <Tabs

@@ -1,5 +1,5 @@
 import React from 'react';
-import { Text, TextProps, StyleSheet, TextStyle, StyleProp, Platform } from 'react-native';
+import { Text, TextProps, StyleSheet, TextStyle, StyleProp } from 'react-native';
 import { useAppTheme } from '../../theme/ThemeProvider';
 import { typography, fontFamilies } from '../../theme/tokens';
 
@@ -12,6 +12,7 @@ export type TextVariant =
   | 'bodyBold'
   | 'subtext'
   | 'caption'
+  | 'captionBold'
   | 'numericHero'
   | 'numericLarge'
   | 'numericMedium';
@@ -82,6 +83,8 @@ export const AppText: React.FC<AppTextProps> = ({
       case 'h3':
       case 'bodyBold':
         return fontFamilies.semiBold;
+      case 'captionBold':
+        return fontFamilies.bold;
       case 'subtitle':
       case 'caption':
         return fontFamilies.medium;

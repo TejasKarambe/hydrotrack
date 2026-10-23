@@ -1,4 +1,6 @@
 import React, { createContext, useContext, useEffect, useState, useCallback, useMemo } from 'react';
+import { AppState, AppStateStatus } from 'react-native';
+import { useRouter } from 'expo-router';
 import { WaterLog, UserSettings, DEFAULT_SETTINGS } from '../types/database';
 import {
   addWaterLog,
@@ -6,16 +8,33 @@ import {
   updateWaterLog,
   deleteWaterLog,
   getPastDaysTotals,
-  clearAllWaterLogs,
+  getDailyAggregatesForRange,
+  getDatesWithLogsForMonth,
+  DailyAggregate,
 } from '../database/waterLogRepository';
-import { getSettings, updateSettings as updateSettingsRepo, resetSettings as resetSettingsRepo } from '../database/settingsRepository';
+import {
+  getSettings,
+  updateSettings as updateSettingsRepo,
+  resetAllDataTransactionally,
+} from '../database/settingsRepository';
 import {
   calculateTotalIntake,
   calculateRemaining,
   calculateProgressPercentage,
   calculateStreak,
 } from '../utils/hydrationCalculations';
-import { getLocalDateKey } from '../utils/dateUtils';
+import {
+  initializeNotificationService,
+  getNotificationPermissions,
+  requestNotificationPermissions,
+  scheduleTestNotification,
+  scheduleSnoozeReminder,
+  reconcileScheduledReminders,
+  openSystemSettings,
+  addNotificationResponseListener,
+  NotificationStatus,
+} from '../services/notificationService';
+import { seedSampleWeeklyData, SeedResult } from '../utils/sampleDataSeeder';
 
 interface HydrationContextType {
   todayLogs: WaterLog[];
@@ -28,6 +47,9 @@ interface HydrationContextType {
   isLoading: boolean;
   isInitialized: boolean;
   error: string | null;
+  notificationStatus: NotificationStatus | null;
+  nextReminderTime: Date | null;
+  scheduledNotificationCount: number;
   refreshToday: () => Promise<void>;
   quickAdd: (amount: number) => Promise<WaterLog>;
   logCustomAmount: (amount: number, consumedAt?: Date | string) => Promise<WaterLog>;
@@ -36,18 +58,53 @@ interface HydrationContextType {
   updateUserSettings: (updates: Partial<UserSettings>) => Promise<void>;
   getLogsForDate: (date: Date | string) => Promise<WaterLog[]>;
   getWeeklySummary: () => Promise<{ dateKey: string; dayLabel: string; totalMl: number; isToday: boolean }[]>;
+  getDailyAggregates: (startDate: Date | string, endDate: Date | string) => Promise<DailyAggregate[]>;
+  getDatesWithLogs: (year: number, month: number) => Promise<string[]>;
   resetAllData: () => Promise<void>;
+  requestPermissions: () => Promise<NotificationStatus>;
+  sendTestNotification: () => Promise<string>;
+  openAppSettings: () => Promise<void>;
+  reconcileReminders: () => Promise<void>;
+  snoozeReminder: (minutes?: number) => Promise<string>;
+  seedTestData: () => Promise<SeedResult>;
 }
 
 const HydrationContext = createContext<HydrationContextType | null>(null);
 
 export const HydrationProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
+  const router = useRouter();
+
   const [todayLogs, setTodayLogs] = useState<WaterLog[]>([]);
   const [settings, setSettings] = useState<UserSettings>(DEFAULT_SETTINGS);
   const [streak, setStreak] = useState<number>(0);
   const [isLoading, setIsLoading] = useState<boolean>(true);
   const [isInitialized, setIsInitialized] = useState<boolean>(false);
   const [error, setError] = useState<string | null>(null);
+
+  // Notification engine state
+  const [notificationStatus, setNotificationStatus] = useState<NotificationStatus | null>(null);
+  const [nextReminderTime, setNextReminderTime] = useState<Date | null>(null);
+  const [scheduledNotificationCount, setScheduledNotificationCount] = useState<number>(0);
+
+  // Reconcile notifications with saved settings
+  const reconcileRemindersWithSettings = useCallback(async (currentSettings: UserSettings) => {
+    try {
+      const perms = await getNotificationPermissions();
+      setNotificationStatus(perms);
+
+      if (currentSettings.reminders_enabled && perms.granted) {
+        const result = await reconcileScheduledReminders(currentSettings);
+        setScheduledNotificationCount(result.scheduledCount);
+        setNextReminderTime(result.nextTrigger);
+      } else {
+        await reconcileScheduledReminders({ ...currentSettings, reminders_enabled: false });
+        setScheduledNotificationCount(0);
+        setNextReminderTime(null);
+      }
+    } catch (err) {
+      console.warn('[HydrationContext] Error reconciling reminders:', err);
+    }
+  }, []);
 
   // Load settings and today's logs on mount
   const refreshToday = useCallback(async () => {
@@ -63,13 +120,18 @@ export const HydrationProvider: React.FC<{ children: React.ReactNode }> = ({ chi
       setTodayLogs(logs);
 
       // Compute streak
-      const daysForStreak = past7Days.map((d) => ({
-        dateKey: d.dateKey,
-        totalMl: d.totalMl,
-        goalMl: currentSettings.daily_goal_ml,
-        isToday: d.isToday,
-      })).reverse(); // newest first
+      const daysForStreak = past7Days
+        .map((d) => ({
+          dateKey: d.dateKey,
+          totalMl: d.totalMl,
+          goalMl: currentSettings.daily_goal_ml,
+          isToday: d.isToday,
+        }))
+        .reverse();
       setStreak(calculateStreak(daysForStreak));
+
+      // Reconcile reminders
+      await reconcileRemindersWithSettings(currentSettings);
     } catch (err) {
       console.error('[HydrationContext] Error loading hydration data:', err);
       setError(err instanceof Error ? err.message : 'Failed to load hydration data.');
@@ -77,11 +139,44 @@ export const HydrationProvider: React.FC<{ children: React.ReactNode }> = ({ chi
       setIsLoading(false);
       setIsInitialized(true);
     }
-  }, []);
+  }, [reconcileRemindersWithSettings]);
 
+  // Initial startup and notification listener setup
   useEffect(() => {
-    refreshToday();
-  }, [refreshToday]);
+    let responseSubscription: { remove: () => void } | null = null;
+
+    (async () => {
+      await initializeNotificationService();
+      await refreshToday();
+
+      // Listen for notification responses (user tapping on notification)
+      responseSubscription = addNotificationResponseListener((data) => {
+        if (data && (data.type === 'water_reminder' || data.type === 'test_notification')) {
+          router.push({
+            pathname: '/log-water',
+            params: {
+              source: 'reminder',
+              scheduledTime: data.scheduledTime ? String(data.scheduledTime) : undefined,
+            },
+          });
+        }
+      });
+    })();
+
+    // Listen to app lifecycle events: reconcile when returning from background
+    const appStateSubscription = AppState.addEventListener('change', (nextAppState: AppStateStatus) => {
+      if (nextAppState === 'active') {
+        refreshToday();
+      }
+    });
+
+    return () => {
+      if (responseSubscription) {
+        responseSubscription.remove();
+      }
+      appStateSubscription.remove();
+    };
+  }, [refreshToday, router]);
 
   const quickAdd = useCallback(
     async (amount: number): Promise<WaterLog> => {
@@ -146,14 +241,40 @@ export const HydrationProvider: React.FC<{ children: React.ReactNode }> = ({ chi
       try {
         const updated = await updateSettingsRepo(updates);
         setSettings(updated);
+        await reconcileRemindersWithSettings(updated);
         await refreshToday();
       } catch (err) {
         console.error('[HydrationContext] Update settings failed:', err);
         throw err;
       }
     },
-    [refreshToday]
+    [reconcileRemindersWithSettings, refreshToday]
   );
+
+  const requestPermissions = useCallback(async (): Promise<NotificationStatus> => {
+    const status = await requestNotificationPermissions();
+    setNotificationStatus(status);
+    if (status.granted) {
+      await reconcileRemindersWithSettings(settings);
+    }
+    return status;
+  }, [reconcileRemindersWithSettings, settings]);
+
+  const sendTestNotification = useCallback(async (): Promise<string> => {
+    return await scheduleTestNotification();
+  }, []);
+
+  const openAppSettings = useCallback(async (): Promise<void> => {
+    await openSystemSettings();
+  }, []);
+
+  const reconcileReminders = useCallback(async (): Promise<void> => {
+    await reconcileRemindersWithSettings(settings);
+  }, [reconcileRemindersWithSettings, settings]);
+
+  const snoozeReminder = useCallback(async (minutes: number = 15): Promise<string> => {
+    return await scheduleSnoozeReminder(minutes);
+  }, []);
 
   const getLogsForDate = useCallback(async (date: Date | string): Promise<WaterLog[]> => {
     return await getWaterLogsForDate(date);
@@ -163,21 +284,43 @@ export const HydrationProvider: React.FC<{ children: React.ReactNode }> = ({ chi
     return await getPastDaysTotals(7);
   }, []);
 
+  const getDailyAggregates = useCallback(async (startDate: Date | string, endDate: Date | string) => {
+    return await getDailyAggregatesForRange(startDate, endDate);
+  }, []);
+
+  const getDatesWithLogs = useCallback(async (year: number, month: number) => {
+    return await getDatesWithLogsForMonth(year, month);
+  }, []);
+
   const resetAllData = useCallback(async () => {
     try {
       setIsLoading(true);
-      await clearAllWaterLogs();
-      const defaultSet = await resetSettingsRepo();
+      const defaultSet = await resetAllDataTransactionally();
       setSettings(defaultSet);
       setTodayLogs([]);
       setStreak(0);
+      await reconcileRemindersWithSettings(defaultSet);
     } catch (err) {
       console.error('[HydrationContext] Reset all data failed:', err);
       throw err;
     } finally {
       setIsLoading(false);
     }
-  }, []);
+  }, [reconcileRemindersWithSettings]);
+
+  const seedTestData = useCallback(async (): Promise<SeedResult> => {
+    try {
+      setIsLoading(true);
+      const result = await seedSampleWeeklyData();
+      await refreshToday();
+      return result;
+    } catch (err) {
+      console.error('[HydrationContext] Seed sample data failed:', err);
+      throw err;
+    } finally {
+      setIsLoading(false);
+    }
+  }, [refreshToday]);
 
   // Derived hydration metrics
   const todayTotalMl = useMemo(() => calculateTotalIntake(todayLogs), [todayLogs]);
@@ -200,6 +343,9 @@ export const HydrationProvider: React.FC<{ children: React.ReactNode }> = ({ chi
       isLoading,
       isInitialized,
       error,
+      notificationStatus,
+      nextReminderTime,
+      scheduledNotificationCount,
       refreshToday,
       quickAdd,
       logCustomAmount,
@@ -208,7 +354,15 @@ export const HydrationProvider: React.FC<{ children: React.ReactNode }> = ({ chi
       updateUserSettings,
       getLogsForDate,
       getWeeklySummary,
+      getDailyAggregates,
+      getDatesWithLogs,
       resetAllData,
+      requestPermissions,
+      sendTestNotification,
+      openAppSettings,
+      reconcileReminders,
+      snoozeReminder,
+      seedTestData,
     }),
     [
       todayLogs,
@@ -221,6 +375,9 @@ export const HydrationProvider: React.FC<{ children: React.ReactNode }> = ({ chi
       isLoading,
       isInitialized,
       error,
+      notificationStatus,
+      nextReminderTime,
+      scheduledNotificationCount,
       refreshToday,
       quickAdd,
       logCustomAmount,
@@ -229,7 +386,15 @@ export const HydrationProvider: React.FC<{ children: React.ReactNode }> = ({ chi
       updateUserSettings,
       getLogsForDate,
       getWeeklySummary,
+      getDailyAggregates,
+      getDatesWithLogs,
       resetAllData,
+      requestPermissions,
+      sendTestNotification,
+      openAppSettings,
+      reconcileReminders,
+      snoozeReminder,
+      seedTestData,
     ]
   );
 

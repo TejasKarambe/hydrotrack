@@ -23,6 +23,25 @@ export function calculateProgressPercentage(totalMl: number, goalMl: number): nu
   return Math.min(100, Math.max(0, percent));
 }
 
+/**
+ * Formats a volume in millilitres into preferred display unit (ml or L)
+ * without altering the underlying stored millilitre integer.
+ */
+export function formatVolume(
+  amountMl: number,
+  unit: 'ml' | 'l' = 'ml',
+  includeUnit: boolean = true
+): string {
+  const safeMl = Math.max(0, typeof amountMl === 'number' && !isNaN(amountMl) ? amountMl : 0);
+  if (unit === 'l') {
+    const litres = safeMl / 1000;
+    // Format up to 2 decimal places, removing unnecessary trailing zeros (e.g. 2 instead of 2.00, 2.5 instead of 2.50)
+    const formatted = litres % 1 === 0 ? litres.toString() : parseFloat(litres.toFixed(2)).toString();
+    return includeUnit ? `${formatted} L` : formatted;
+  }
+  return includeUnit ? `${safeMl.toLocaleString()} ml` : safeMl.toLocaleString();
+}
+
 export function calculateAverageIntake(dailyTotals: number[]): number {
   if (!Array.isArray(dailyTotals) || dailyTotals.length === 0) return 0;
   const sum = dailyTotals.reduce((acc, curr) => acc + (typeof curr === 'number' && !isNaN(curr) ? curr : 0), 0);
@@ -61,4 +80,83 @@ export function calculateStreak(
   }
 
   return streak;
+}
+
+export interface DailyIntakeItem {
+  dateKey: string;
+  dayLabel: string;
+  totalMl: number;
+  isToday: boolean;
+}
+
+export interface WeeklyMetrics {
+  totalPeriod: number;
+  averageDaily: number;
+  daysAchieved: number;
+  completionRate: number;
+  bestDay: { dayLabel: string; dateKey: string; totalMl: number } | null;
+  textSummary: string;
+}
+
+/**
+ * Calculates complete weekly analytics metrics derived from daily totals and current daily goal.
+ */
+export function calculateWeeklyMetrics(
+  days: DailyIntakeItem[],
+  dailyGoalMl: number
+): WeeklyMetrics {
+  const safeGoal = Math.max(0, dailyGoalMl || 0);
+  const totalDays = Array.isArray(days) ? days.length : 0;
+
+  if (totalDays === 0) {
+    return {
+      totalPeriod: 0,
+      averageDaily: 0,
+      daysAchieved: 0,
+      completionRate: 0,
+      bestDay: null,
+      textSummary: 'No hydration data available for this period.',
+    };
+  }
+
+  const amounts = days.map((d) => (typeof d.totalMl === 'number' && !isNaN(d.totalMl) ? Math.max(0, d.totalMl) : 0));
+  const totalPeriod = amounts.reduce((acc, curr) => acc + curr, 0);
+  const averageDaily = calculateAverageIntake(amounts);
+
+  const daysComparison = days.map((d) => ({
+    totalMl: Math.max(0, d.totalMl || 0),
+    goalMl: safeGoal,
+  }));
+  const daysAchieved = calculateDaysAchieved(daysComparison);
+  const completionRate = Math.round((daysAchieved / totalDays) * 100);
+
+  // Determine highest intake day
+  let bestDay: { dayLabel: string; dateKey: string; totalMl: number } | null = null;
+  let maxVal = 0;
+  for (const d of days) {
+    if (d.totalMl > maxVal) {
+      maxVal = d.totalMl;
+      bestDay = {
+        dayLabel: d.dayLabel,
+        dateKey: d.dateKey,
+        totalMl: d.totalMl,
+      };
+    }
+  }
+
+  const todayItem = days.find((d) => d.isToday);
+  const todayFragment = todayItem
+    ? ` Today is in progress at ${todayItem.totalMl.toLocaleString()} ml.`
+    : '';
+
+  const textSummary = `Weekly water intake summary: 7-day average intake is ${averageDaily.toLocaleString()} ml per day across ${totalDays} days. Target of ${safeGoal.toLocaleString()} ml achieved on ${daysAchieved} of ${totalDays} days (${completionRate}%). Total consumed: ${totalPeriod.toLocaleString()} ml.${bestDay ? ` Highest intake occurred on ${bestDay.dayLabel} (${bestDay.totalMl.toLocaleString()} ml).` : ''}${todayFragment}`;
+
+  return {
+    totalPeriod,
+    averageDaily,
+    daysAchieved,
+    completionRate,
+    bestDay,
+    textSummary,
+  };
 }

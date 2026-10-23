@@ -1,6 +1,6 @@
 import React, { useEffect } from 'react';
-import { View, StyleSheet, Dimensions } from 'react-native';
-import Svg, { Path, Defs, LinearGradient, Stop, Circle } from 'react-native-svg';
+import { View, StyleSheet } from 'react-native';
+import Svg, { Path, Defs, LinearGradient, Stop } from 'react-native-svg';
 import Animated, {
   useSharedValue,
   useAnimatedStyle,
@@ -14,20 +14,22 @@ import Animated, {
 import { LinearGradient as ExpoLinearGradient } from 'expo-linear-gradient';
 import { useAppTheme } from '../../theme/ThemeProvider';
 import { AppText } from '../ui/AppText';
-import { Droplet, Sparkles } from 'lucide-react-native';
+import { Droplet } from 'lucide-react-native';
 
-const AnimatedSvg = Animated.createAnimatedComponent(Svg);
+import { formatVolume } from '../../utils/hydrationCalculations';
 
 interface AnimatedWaterVesselProps {
   currentMl: number;
   goalMl: number;
   size?: number;
+  unit?: 'ml' | 'l';
 }
 
 export const AnimatedWaterVessel: React.FC<AnimatedWaterVesselProps> = ({
   currentMl,
   goalMl,
   size = 230,
+  unit = 'ml',
 }) => {
   const { colors, isDark } = useAppTheme();
 
@@ -197,10 +199,10 @@ export const AnimatedWaterVessel: React.FC<AnimatedWaterVesselProps> = ({
 
           <View style={styles.amountContainer}>
             <AppText variant="numericHero" color="primary" style={styles.numericValue}>
-              {currentMl.toLocaleString()}
+              {formatVolume(currentMl, unit, false)}
             </AppText>
             <AppText variant="caption" color="secondary" style={styles.targetLabel}>
-              of {goalMl.toLocaleString()} ml
+              of {formatVolume(goalMl, unit)}
             </AppText>
           </View>
         </View>

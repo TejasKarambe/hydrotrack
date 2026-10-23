@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState } from 'react';
 import {
   View,
   StyleSheet,
@@ -11,7 +11,7 @@ import {
 import { useRouter, useLocalSearchParams } from 'expo-router';
 import { LinearGradient } from 'expo-linear-gradient';
 import Animated, { FadeInDown } from 'react-native-reanimated';
-import { X, Droplets, Check, Clock, Trash2, Calendar } from 'lucide-react-native';
+import { X, Droplets, Check, Clock, Trash2, Bell, SkipForward } from 'lucide-react-native';
 import { Screen, AppText, Button, Card, IconButton } from '../src/components/ui';
 import { useAppTheme } from '../src/theme/ThemeProvider';
 import { useHydration } from '../src/context/HydrationContext';
@@ -41,21 +41,32 @@ export default function LogWaterModal() {
     editId?: string;
     initialAmount?: string;
     initialTime?: string;
+    selectedDate?: string;
+    source?: string;
+    scheduledTime?: string;
   }>();
 
   const isEditing = Boolean(params.editId);
   const editId = params.editId;
+  const isFromReminder = params.source === 'reminder';
 
   const { colors, isDark, radii } = useAppTheme();
-  const { logCustomAmount, editLog, deleteLog } = useHydration();
+  const { logCustomAmount, editLog, deleteLog, snoozeReminder } = useHydration();
 
   const [amountStr, setAmountStr] = useState<string>(params.initialAmount || '250');
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
   const [selectedMinutesAgo, setSelectedMinutesAgo] = useState<number>(0);
-  const [customConsumedDate, setCustomConsumedDate] = useState<Date>(
-    params.initialTime ? new Date(params.initialTime) : new Date()
-  );
+  const [customConsumedDate, setCustomConsumedDate] = useState<Date>(() => {
+    if (params.initialTime) return new Date(params.initialTime);
+    if (params.selectedDate && params.selectedDate.length === 10) {
+      const [y, m, d] = params.selectedDate.split('-').map(Number);
+      const now = new Date();
+      return new Date(y, m - 1, d, now.getHours(), now.getMinutes(), 0);
+    }
+    return new Date();
+  });
   const [isSubmitting, setIsSubmitting] = useState(false);
+  const [isSnoozing, setIsSnoozing] = useState(false);
   const [success, setSuccess] = useState(false);
 
   const parsedAmount = parseInt(amountStr, 10);
@@ -66,6 +77,26 @@ export default function LogWaterModal() {
     const d = new Date();
     d.setMinutes(d.getMinutes() - minutesAgo);
     setCustomConsumedDate(d);
+  };
+
+  const handleSnooze = async () => {
+    if (isSnoozing) return;
+    try {
+      setIsSnoozing(true);
+      await snoozeReminder(15);
+      Alert.alert(
+        'Reminder Snoozed',
+        'HydroTrack will remind you again in 15 minutes.',
+        [{ text: 'OK', onPress: () => router.back() }]
+      );
+    } catch {
+      Alert.alert('Notice', 'Could not schedule snooze reminder. Please verify notification permissions.');
+      setIsSnoozing(false);
+    }
+  };
+
+  const handleSkip = () => {
+    router.back();
   };
 
   const handleSave = async () => {
@@ -112,7 +143,7 @@ export default function LogWaterModal() {
             try {
               await deleteLog(editId);
               router.back();
-            } catch (err) {
+            } catch {
               Alert.alert('Error', 'Failed to delete record.');
             }
           },
@@ -157,6 +188,84 @@ export default function LogWaterModal() {
             size="sm"
           />
         </View>
+
+        {/* Scheduled Reminder Context Alert (Shown when navigating from notification) */}
+        {isFromReminder && (
+          <Animated.View entering={FadeInDown.duration(350)}>
+            <Card
+              variant="default"
+              padding={16}
+              style={[
+                styles.reminderBannerCard,
+                {
+                  backgroundColor: colors.accentSubtle,
+                  borderColor: colors.borderGlow,
+                },
+              ]}
+            >
+              <View style={styles.reminderBannerHeader}>
+                <View
+                  style={[
+                    styles.reminderBannerIcon,
+                    { backgroundColor: colors.accent, borderColor: colors.borderGlow },
+                  ]}
+                >
+                  <Bell size={18} color="#FFFFFF" strokeWidth={2.4} />
+                </View>
+                <View style={{ flex: 1, gap: 2 }}>
+                  <AppText variant="bodyBold" color="primary">
+                    Scheduled Hydration Reminder
+                  </AppText>
+                  <AppText variant="caption" color="secondary">
+                    {params.scheduledTime
+                      ? `Alert for ${formatLocalTime(params.scheduledTime)}. Log water consumed or snooze:`
+                      : 'Take a minute to rehydrate and log your water.'}
+                  </AppText>
+                </View>
+              </View>
+
+              <View style={styles.reminderActionsRow}>
+                <Pressable
+                  accessibilityRole="button"
+                  accessibilityLabel="Snooze reminder for 15 minutes"
+                  onPress={handleSnooze}
+                  style={({ pressed }) => [
+                    styles.reminderActionBtn,
+                    {
+                      backgroundColor: colors.surface,
+                      borderColor: colors.border,
+                      opacity: pressed || isSnoozing ? 0.6 : 1,
+                    },
+                  ]}
+                >
+                  <Clock size={15} color={colors.accent} strokeWidth={2.2} />
+                  <AppText variant="caption" color="accent" style={{ fontWeight: '700' }}>
+                    {isSnoozing ? 'Snoozing...' : 'Snooze 15m'}
+                  </AppText>
+                </Pressable>
+
+                <Pressable
+                  accessibilityRole="button"
+                  accessibilityLabel="Skip reminder"
+                  onPress={handleSkip}
+                  style={({ pressed }) => [
+                    styles.reminderActionBtn,
+                    {
+                      backgroundColor: colors.surface,
+                      borderColor: colors.border,
+                      opacity: pressed ? 0.6 : 1,
+                    },
+                  ]}
+                >
+                  <SkipForward size={15} color={colors.textSecondary} strokeWidth={2.2} />
+                  <AppText variant="caption" color="secondary">
+                    Skip Reminder
+                  </AppText>
+                </Pressable>
+              </View>
+            </Card>
+          </Animated.View>
+        )}
 
         {/* Live Fluid Flask Container */}
         <Animated.View entering={FadeInDown.duration(400)} style={styles.flaskContainer}>
@@ -486,5 +595,39 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
     gap: 8,
     paddingVertical: 16,
+  },
+  reminderBannerCard: {
+    borderWidth: 1.5,
+    borderRadius: 20,
+    gap: 12,
+  },
+  reminderBannerHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 12,
+  },
+  reminderBannerIcon: {
+    width: 38,
+    height: 38,
+    borderRadius: 19,
+    alignItems: 'center',
+    justifyContent: 'center',
+    borderWidth: 1,
+  },
+  reminderActionsRow: {
+    flexDirection: 'row',
+    gap: 10,
+    paddingTop: 4,
+  },
+  reminderActionBtn: {
+    flex: 1,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 6,
+    paddingVertical: 9,
+    paddingHorizontal: 12,
+    borderRadius: 12,
+    borderWidth: 1,
   },
 });

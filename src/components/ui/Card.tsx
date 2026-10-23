@@ -1,10 +1,11 @@
-import React from 'react';
 import {
   View,
   Pressable,
   StyleSheet,
   ViewStyle,
   StyleProp,
+  LayoutChangeEvent,
+  AccessibilityRole,
 } from 'react-native';
 import { useAppTheme } from '../../theme/ThemeProvider';
 
@@ -18,6 +19,8 @@ export interface CardProps {
   style?: StyleProp<ViewStyle>;
   testID?: string;
   accessibilityLabel?: string;
+  accessibilityRole?: AccessibilityRole;
+  onLayout?: (e: LayoutChangeEvent) => void;
 }
 
 export const Card: React.FC<CardProps> = ({
@@ -28,6 +31,8 @@ export const Card: React.FC<CardProps> = ({
   style,
   testID,
   accessibilityLabel,
+  accessibilityRole,
+  onLayout,
 }) => {
   const { colors, radii } = useAppTheme();
 
@@ -70,9 +75,10 @@ export const Card: React.FC<CardProps> = ({
     return (
       <Pressable
         testID={testID}
-        accessibilityRole="button"
+        accessibilityRole={accessibilityRole || "button"}
         accessibilityLabel={accessibilityLabel}
         onPress={onPress}
+        onLayout={onLayout}
         style={({ pressed }) => [
           styles.base,
           cardStyle,
@@ -86,7 +92,13 @@ export const Card: React.FC<CardProps> = ({
   }
 
   return (
-    <View testID={testID} style={[styles.base, cardStyle, style]}>
+    <View
+      testID={testID}
+      accessibilityRole={accessibilityRole}
+      accessibilityLabel={accessibilityLabel}
+      onLayout={onLayout}
+      style={[styles.base, cardStyle, style]}
+    >
       {children}
     </View>
   );
